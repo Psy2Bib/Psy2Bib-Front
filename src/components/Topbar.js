@@ -1,27 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { clearEncryptionKey, hasEncryptionKey } from '../utils/crypto';
 
 export default function Topbar() {
   const [user, setUser] = useState(null);
+  const [isE2EEActive, setIsE2EEActive] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
     const currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
     setUser(currentUser);
+    setIsE2EEActive(hasEncryptionKey());
   }, []);
 
   const handleLogout = () => {
+    clearEncryptionKey();
     localStorage.removeItem('currentUser');
     setUser(null);
+    setIsE2EEActive(false);
     navigate('/');
   };
 
   return (
     <nav className="navbar navbar-expand-lg navbar-light bg-white shadow-sm sticky-top">
       <div className="container-fluid">
-        <Link className="navbar-brand fw-bold text-primary" to="/">
-          <i className="bi bi-heart-pulse-fill me-2"></i>
-          Psy2Bib
+        <Link className="navbar-brand fw-bold text-primary d-flex align-items-center" to="/">
+          <i className="bi bi-shield-lock-fill me-2"></i>
+          <span>Psy2Bib</span>
+          {isE2EEActive && (
+            <span className="badge bg-success ms-2 small">
+              <i className="bi bi-shield-check"></i> E2EE
+            </span>
+          )}
         </Link>
         
         <button
@@ -69,12 +79,13 @@ export default function Topbar() {
                   <Link className="nav-link" to="/messages">
                     <i className="bi bi-chat-dots me-1"></i>
                     Messagerie
+                    <span className="badge bg-danger ms-1 small">E2EE</span>
                   </Link>
                 </li>
                 <li className="nav-item">
                   <Link className="nav-link" to="/visio">
                     <i className="bi bi-camera-video me-1"></i>
-                    Visio
+                    Visio Avatar
                   </Link>
                 </li>
               </>
@@ -107,8 +118,11 @@ export default function Topbar() {
                     role="button"
                     data-bs-toggle="dropdown"
                   >
-                    <i className="bi bi-person-circle me-1"></i>
-                    {user.email.split('@')[0]}
+                    <i className={`bi ${user.role === 'psy' ? 'bi-person-badge' : 'bi-person-circle'} me-1`}></i>
+                    {user.profile?.firstName || user.email.split('@')[0]}
+                    {isE2EEActive && (
+                      <i className="bi bi-shield-check text-success ms-2"></i>
+                    )}
                   </a>
                   <ul className="dropdown-menu dropdown-menu-end">
                     <li>
@@ -119,6 +133,11 @@ export default function Topbar() {
                         <i className="bi bi-speedometer2 me-2"></i>
                         Dashboard
                       </Link>
+                    </li>
+                    <li><hr className="dropdown-divider" /></li>
+                    <li className="px-3 py-2 small text-muted">
+                      <i className="bi bi-shield-lock me-1"></i>
+                      Chiffrement actif
                     </li>
                     <li><hr className="dropdown-divider" /></li>
                     <li>

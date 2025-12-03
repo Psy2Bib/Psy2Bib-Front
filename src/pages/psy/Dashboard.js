@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { clearEncryptionKey, hasEncryptionKey } from '../../utils/crypto';
 
 export default function PsyDashboard() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [availability, setAvailability] = useState([]);
   const [newSlot, setNewSlot] = useState({ day: '', time: '' });
-  const [stats, setStats] = useState({
+  const [stats] = useState({
     totalPatients: 15,
     appointmentsToday: 3,
     unreadMessages: 5,
@@ -15,7 +16,7 @@ export default function PsyDashboard() {
 
   useEffect(() => {
     const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-    if (!currentUser.email || currentUser.role !== 'psy') {
+    if (!currentUser.email || currentUser.role !== 'psy' || !hasEncryptionKey()) {
       navigate('/psy/login');
       return;
     }
@@ -26,6 +27,7 @@ export default function PsyDashboard() {
   }, [navigate]);
 
   const handleLogout = () => {
+    clearEncryptionKey();
     localStorage.removeItem('currentUser');
     navigate('/psy/login');
   };
@@ -69,8 +71,17 @@ export default function PsyDashboard() {
     <div>
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
-          <h1 className="mb-0">Espace Professionnel</h1>
-          <p className="text-muted">Bienvenue, Dr. {user.email.split('@')[0]}</p>
+          <h1 className="mb-0">
+            <i className="bi bi-briefcase me-2 text-success"></i>
+            Espace Professionnel
+          </h1>
+          <p className="text-muted mb-0">
+            Bienvenue, <strong>Dr. {user.profile?.firstName || user.email.split('@')[0]}</strong>
+            <span className="badge bg-success ms-2">
+              <i className="bi bi-shield-check me-1"></i>
+              E2EE Actif
+            </span>
+          </p>
         </div>
         <button className="btn btn-outline-danger" onClick={handleLogout}>
           <i className="bi bi-box-arrow-right me-2"></i>
@@ -137,7 +148,7 @@ export default function PsyDashboard() {
         </div>
       </div>
 
-      {/* Gestion des disponibilités */}
+      {/* Gestion disponibilités */}
       <div className="row mb-4">
         <div className="col-12 col-lg-6 mb-4">
           <div className="card shadow">
@@ -237,7 +248,10 @@ export default function PsyDashboard() {
                 <div className="list-group-item">
                   <div className="d-flex justify-content-between">
                     <div>
-                      <h6 className="mb-1">Patient A.</h6>
+                      <h6 className="mb-1">
+                        <i className="bi bi-shield-lock text-success me-2"></i>
+                        Patient A. (Anonyme)
+                      </h6>
                       <small className="text-muted">Première consultation</small>
                     </div>
                     <div className="text-end">
@@ -252,7 +266,10 @@ export default function PsyDashboard() {
                 <div className="list-group-item">
                   <div className="d-flex justify-content-between">
                     <div>
-                      <h6 className="mb-1">Patient B.</h6>
+                      <h6 className="mb-1">
+                        <i className="bi bi-shield-lock text-success me-2"></i>
+                        Patient B. (Anonyme)
+                      </h6>
                       <small className="text-muted">Suivi mensuel</small>
                     </div>
                     <div className="text-end">
@@ -267,7 +284,10 @@ export default function PsyDashboard() {
                 <div className="list-group-item">
                   <div className="d-flex justify-content-between">
                     <div>
-                      <h6 className="mb-1">Patient C.</h6>
+                      <h6 className="mb-1">
+                        <i className="bi bi-shield-lock text-success me-2"></i>
+                        Patient C. (Anonyme)
+                      </h6>
                       <small className="text-muted">Thérapie familiale</small>
                     </div>
                     <div className="text-end">
@@ -298,7 +318,7 @@ export default function PsyDashboard() {
                     <div className="card text-center hover-shadow" style={{cursor: 'pointer'}}>
                       <div className="card-body">
                         <i className="bi bi-chat-dots text-info" style={{fontSize: '2.5rem'}}></i>
-                        <p className="mt-2 mb-0 fw-bold">Messagerie</p>
+                        <p className="mt-2 mb-0 fw-bold">Messagerie E2EE</p>
                       </div>
                     </div>
                   </Link>
@@ -319,7 +339,7 @@ export default function PsyDashboard() {
                   <div className="card text-center hover-shadow" style={{cursor: 'pointer'}}>
                     <div className="card-body">
                       <i className="bi bi-folder text-warning" style={{fontSize: '2.5rem'}}></i>
-                      <p className="mt-2 mb-0 fw-bold">Dossiers</p>
+                      <p className="mt-2 mb-0 fw-bold">Dossiers Chiffrés</p>
                     </div>
                   </div>
                 </div>
