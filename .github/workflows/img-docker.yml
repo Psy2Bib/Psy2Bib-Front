@@ -68,7 +68,7 @@ jobs:
           file: Dockerfile
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/${{ steps.repo_name.outputs.lower }}-front:${{ needs.tags.outputs.new_tag }}
-            ${{ secrets.DOCKER_USERNAME }}/${{ steps.repo_name.outputs.lower }}-front:latest
-            ghcr.io/psy2bib/${{ steps.repo_name.outputs.lower }}-front:${{ github.sha }}
-            ghcr.io/psy2bib/${{ steps.repo_name.outputs.lower }}-front:latest
+            ${{ secrets.DOCKER_USERNAME }}/${{ steps.repo_name.outputs.lower }}:${{ needs.tags.outputs.new_tag }}
+            ${{ secrets.DOCKER_USERNAME }}/${{ steps.repo_name.outputs.lower }}:latest
+            ghcr.io/psy2bib/${{ steps.repo_name.outputs.lower }}:${{ github.sha }}
+            ghcr.io/psy2bib/${{ steps.repo_name.outputs.lower }}:latest
