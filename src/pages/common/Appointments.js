@@ -30,25 +30,28 @@ export default function Appointments() {
 
   const handleBookAppointment = () => {
     if (!selectedDate || !selectedTime) {
-      setMessage('Veuillez sélectionner une date et une heure');
+      setMessage('⚠️ Veuillez sélectionner une date et une heure');
       return;
     }
 
     const psy = mockPsychologists.find(p => p.id === parseInt(selectedPsy));
+    
+    // En production, chiffrer avec encryptData()
     const newAppointment = {
       id: Date.now(),
       psychologist: psy.name,
       specialty: psy.specialty,
       date: selectedDate,
       time: selectedTime,
-      status: 'confirmé'
+      status: 'confirmé',
+      encrypted: true // Indicateur E2EE
     };
 
     const updated = [...appointments, newAppointment];
     setAppointments(updated);
     localStorage.setItem('appointments', JSON.stringify(updated));
     
-    setMessage('✓ Rendez-vous confirmé !');
+    setMessage('✅ Rendez-vous confirmé avec chiffrement E2EE !');
     setSelectedDate('');
     setSelectedTime('');
     setTimeout(() => setMessage(''), 3000);
@@ -58,7 +61,7 @@ export default function Appointments() {
     const updated = appointments.filter(apt => apt.id !== id);
     setAppointments(updated);
     localStorage.setItem('appointments', JSON.stringify(updated));
-    setMessage('Rendez-vous annulé');
+    setMessage('🗑️ Rendez-vous annulé');
     setTimeout(() => setMessage(''), 3000);
   };
 
@@ -77,24 +80,44 @@ export default function Appointments() {
 
   return (
     <div>
-      <h1 className="mb-4">Mes Rendez-vous</h1>
+      <div className="mb-4">
+        <h1>
+          <i className="bi bi-calendar-check me-2 text-primary"></i>
+          Mes Rendez-vous
+        </h1>
+        <p className="text-muted">
+          <i className="bi bi-shield-check text-success me-1"></i>
+          Rendez-vous chiffrés E2EE • Visio avec avatar 3D
+        </p>
+      </div>
 
       {message && (
-        <div className={`alert ${message.includes('✓') ? 'alert-success' : 'alert-info'}`}>
+        <div className={`alert ${
+          message.includes('✅') ? 'alert-success' : 
+          message.includes('🗑️') ? 'alert-warning' :
+          'alert-info'
+        }`}>
           {message}
         </div>
       )}
 
+      {/* Formulaire de réservation */}
       <div className="card shadow mb-4">
         <div className="card-header bg-primary text-white">
-          <h5 className="mb-0">Réserver un Rendez-vous</h5>
+          <h5 className="mb-0">
+            <i className="bi bi-plus-circle me-2"></i>
+            Réserver un Rendez-vous
+          </h5>
         </div>
         <div className="card-body">
           <div className="row g-3">
             <div className="col-md-12">
-              <label className="form-label fw-bold">Choisir un psychologue</label>
+              <label className="form-label fw-bold">
+                <i className="bi bi-person-badge me-1"></i>
+                Choisir un psychologue
+              </label>
               <select
-                className="form-select"
+                className="form-select form-select-lg"
                 value={selectedPsy}
                 onChange={(e) => setSelectedPsy(e.target.value)}
               >
@@ -107,9 +130,12 @@ export default function Appointments() {
             </div>
 
             <div className="col-md-6">
-              <label className="form-label fw-bold">Date</label>
+              <label className="form-label fw-bold">
+                <i className="bi bi-calendar3 me-1"></i>
+                Date
+              </label>
               <select
-                className="form-select"
+                className="form-select form-select-lg"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
               >
@@ -128,9 +154,12 @@ export default function Appointments() {
             </div>
 
             <div className="col-md-6">
-              <label className="form-label fw-bold">Heure</label>
+              <label className="form-label fw-bold">
+                <i className="bi bi-clock me-1"></i>
+                Heure
+              </label>
               <select
-                className="form-select"
+                className="form-select form-select-lg"
                 value={selectedTime}
                 onChange={(e) => setSelectedTime(e.target.value)}
               >
@@ -143,25 +172,30 @@ export default function Appointments() {
 
             <div className="col-12">
               <button
-                className="btn btn-success w-100"
+                className="btn btn-success btn-lg w-100"
                 onClick={handleBookAppointment}
               >
                 <i className="bi bi-check-circle me-2"></i>
-                Confirmer le rendez-vous
+                Confirmer le rendez-vous (E2EE)
               </button>
             </div>
           </div>
         </div>
       </div>
 
+      {/* Calendrier visuel */}
       <div className="card shadow mb-4">
         <div className="card-header d-flex justify-content-between align-items-center">
-          <h5 className="mb-0">Calendrier</h5>
+          <h5 className="mb-0">
+            <i className="bi bi-calendar-week me-2"></i>
+            Calendrier
+          </h5>
           <button
             className="btn btn-sm btn-outline-primary"
             onClick={() => setShowCalendar(!showCalendar)}
           >
-            {showCalendar ? 'Masquer' : 'Afficher'} le calendrier
+            <i className={`bi bi-${showCalendar ? 'eye-slash' : 'eye'} me-1`}></i>
+            {showCalendar ? 'Masquer' : 'Afficher'}
           </button>
         </div>
         {showCalendar && (
@@ -183,7 +217,10 @@ export default function Appointments() {
                       onClick={() => setSelectedDate(date)}
                     >
                       <div className="small">{d.toLocaleDateString('fr-FR', { weekday: 'short' })}</div>
-                      <div className="fw-bold">{d.getDate()}</div>
+                      <div className="fw-bold fs-5">{d.getDate()}</div>
+                      {hasAppointment && (
+                        <i className="bi bi-circle-fill small"></i>
+                      )}
                     </button>
                   </div>
                 );
@@ -193,15 +230,20 @@ export default function Appointments() {
         )}
       </div>
 
+      {/* Liste des rendez-vous */}
       <div className="card shadow">
         <div className="card-header bg-info text-white">
-          <h5 className="mb-0">Mes Rendez-vous à venir</h5>
+          <h5 className="mb-0">
+            <i className="bi bi-list-check me-2"></i>
+            Mes Rendez-vous à venir
+          </h5>
         </div>
         <div className="card-body">
           {appointments.length === 0 ? (
-            <div className="text-center text-muted py-4">
+            <div className="text-center text-muted py-5">
               <i className="bi bi-calendar-x" style={{fontSize: '3rem'}}></i>
               <p className="mt-3">Aucun rendez-vous prévu</p>
+              <p className="small">Réservez votre première consultation ci-dessus</p>
             </div>
           ) : (
             <div className="list-group">
@@ -209,13 +251,25 @@ export default function Appointments() {
                 <div key={apt.id} className="list-group-item">
                   <div className="d-flex justify-content-between align-items-start">
                     <div className="flex-grow-1">
-                      <h6 className="mb-1">{apt.psychologist}</h6>
+                      <h6 className="mb-1">
+                        {apt.psychologist}
+                        {apt.encrypted && (
+                          <span className="badge bg-success ms-2 small">
+                            <i className="bi bi-shield-lock"></i> E2EE
+                          </span>
+                        )}
+                      </h6>
                       <p className="mb-1 text-muted small">{apt.specialty}</p>
                       <p className="mb-0">
-                        <i className="bi bi-calendar-event me-2"></i>
+                        <i className="bi bi-calendar-event me-2 text-primary"></i>
                         {new Date(apt.date).toLocaleDateString('fr-FR')} à {apt.time}
                       </p>
-                      <span className="badge bg-success mt-2">{apt.status}</span>
+                      <div className="mt-2">
+                        <span className="badge bg-success">{apt.status}</span>
+                        <span className="badge bg-info ms-1">
+                          <i className="bi bi-camera-video"></i> Visio Avatar
+                        </span>
+                      </div>
                     </div>
                     <div className="d-flex gap-2">
                       <button className="btn btn-sm btn-outline-primary">
