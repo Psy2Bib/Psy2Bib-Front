@@ -12,12 +12,11 @@ permissions:
 jobs:
   tags:
     runs-on: ubuntu-latest
-
     outputs:
       new_tag: ${{ steps.newtag.outputs.tag }}
 
     steps:
-      - name: Checkout repo
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -38,6 +37,18 @@ jobs:
             NEW_TAG="v0.0.1"
           fi
           echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Create and push Git tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git tag ${{ steps.newtag.outputs.tag }}
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git ${{ steps.newtag.outputs.tag }}
 
   build-and-push-front:
     needs: tags
