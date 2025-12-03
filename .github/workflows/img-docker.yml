@@ -72,4 +72,3 @@ jobs:
             ${{ secrets.DOCKER_USERNAME }}/${{ steps.repo_name.outputs.lower }}-front:latest
             ghcr.io/psy2bib/${{ steps.repo_name.outputs.lower }}-front:${{ github.sha }}
             ghcr.io/psy2bib/${{ steps.repo_name.outputs.lower }}-front:latest
-          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
