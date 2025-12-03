@@ -1,8 +1,7 @@
-FROM node:22-alpine AS builder
+FROM node:22-bullseye AS builder
 WORKDIR /app
-RUN apk add --no-cache python3 make g++
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 COPY . .
 RUN npm run build
 
