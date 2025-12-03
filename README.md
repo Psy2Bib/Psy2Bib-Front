@@ -1,9 +1,5 @@
 # Psy2Bib - Plateforme de Consultation Psychologique 🔐
 
-## 🚀 PROBLÈME RÉSOLU
-
-Le fichier `Register.js` original contenait du code de `crypto.js`. Tous les fichiers ont été corrigés et organisés dans la bonne structure.
-
 ## ✅ Installation
 
 ```bash
@@ -148,15 +144,6 @@ Cette version utilise `localStorage` pour simuler un backend. En production :
 - Le serveur stocke uniquement des blobs chiffrés
 - Impossible de récupérer les données sans le mot de passe
 
-## 🎯 Fichiers Corrigés
-
-| Fichier | Status | Description |
-|---------|--------|-------------|
-| `src/pages/patient/Register.js` | ✅ CORRIGÉ | Contenait du code de crypto.js |
-| `src/pages/psy/Login.js` | ✅ CRÉÉ | Manquait dans l'upload |
-| `src/pages/psy/Register.js` | ✅ CRÉÉ | Manquait dans l'upload |
-| `src/pages/psy/Dashboard.js` | ✅ CRÉÉ | Manquait dans l'upload |
-
 ## 💡 Différences Patient vs Psychologue
 
 ### Patient
@@ -186,6 +173,3 @@ Si vous rencontrez des problèmes :
 2. Vérifiez la console navigateur (F12)
 3. Assurez-vous que `npm install` s'est terminé sans erreur
 
----
-
-**✅ Tous les fichiers sont maintenant corrigés et prêts à l'emploi !**
