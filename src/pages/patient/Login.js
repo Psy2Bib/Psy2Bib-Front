@@ -1,34 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { 
-  deriveKey, 
-  decryptData, 
-  base64ToArrayBuffer, 
-  storeEncryptionKey,
-  isArgon2Available,
-  getArgon2Config 
-} from '../../utils/crypto';
+import { deriveKey, decryptData, hashPassword, storeEncryptionKey } from '../../utils/crypto';
+import { login } from '../../utils/api';
 
 export default function PatientLogin() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  const [argon2Ready, setArgon2Ready] = useState(false);
   const navigate = useNavigate();
-
-  useEffect(() => {
-    // Vérifier que Argon2 est chargé
-    const checkArgon2 = () => {
-      if (isArgon2Available()) {
-        setArgon2Ready(true);
-        console.log('Argon2 prêt:', getArgon2Config());
-      } else {
-        setTimeout(checkArgon2, 100);
-      }
-    };
-    checkArgon2();
-  }, []);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -36,62 +16,61 @@ export default function PatientLogin() {
       return;
     }
 
-    if (!argon2Ready) {
-      setMessage('⏳ Chargement du module de sécurité Argon2...');
-      return;
-    }
-
     setLoading(true);
-    setMessage('🔐 Dérivation Argon2id en cours (64MB RAM)...');
+    setMessage('🔄 Authentification en cours...');
 
     try {
-      // 1. Récupérer les données chiffrées (simulation backend)
-      const stored = localStorage.getItem(`patient:${email}`);
+      // 1. Hasher le mot de passe pour l'envoi au serveur
+      const passwordHash = await hashPassword(password);
+
+      // 2. Appel API Login
+      const response = await login(email, passwordHash);
       
-      if (!stored) {
-        setMessage('❌ Compte non trouvé. Veuillez vous inscrire.');
-        setLoading(false);
-        return;
+      if (response.role !== 'PATIENT') {
+        throw new Error('Ce compte n\'est pas un compte patient.');
       }
 
-      const userData = JSON.parse(stored);
+      setMessage('🔓 Déchiffrement de vos données...');
 
-      // 2. Récupérer le salt et re-dériver la clé AES avec Argon2id
-      const salt = base64ToArrayBuffer(userData.salt);
+      // 3. Dériver la clé de chiffrement avec le salt reçu et le mot de passe saisi
+      // response contient { accessToken, encryptedMasterKey, salt, encryptedProfile, ... }
       
-      setMessage('🔓 Déchiffrement AES-GCM en cours...');
-      const encryptionKey = await deriveKey(password, salt);
+      // Note: salt et encryptedProfile sont en Base64 (reçus du backend)
+      const encryptionKey = await deriveKey(password, response.salt);
 
-      // 3. Tenter de déchiffrer le profil
+      // 4. Tenter de déchiffrer le profil
+      let decryptedProfile = {};
       try {
-        const decryptedProfile = await decryptData(userData.encryptedProfile, encryptionKey);
-        
-        // 4. Si le déchiffrement réussit, le mot de passe est correct
-        storeEncryptionKey(encryptionKey);
-
-        // 5. Stocker l'utilisateur connecté avec profil déchiffré
-        localStorage.setItem('currentUser', JSON.stringify({
-          email,
-          role: 'patient',
-          profile: decryptedProfile
-        }));
-
-        setMessage('✅ Connexion réussie ! Redirection...');
-        setTimeout(() => navigate('/patient/dashboard'), 1500);
-
+        if (response.encryptedProfile) {
+          decryptedProfile = await decryptData(response.encryptedProfile, encryptionKey);
+        }
       } catch (decryptError) {
-        setMessage('❌ Mot de passe incorrect. Impossible de déchiffrer vos données.');
-        setLoading(false);
+        console.error('Erreur déchiffrement:', decryptError);
+        throw new Error('Authentification réussie mais impossible de déchiffrer les données locales (Mot de passe différent ?)');
       }
+
+      // 5. Succès : Stocker les tokens et la clé
+      localStorage.setItem('accessToken', response.accessToken);
+      localStorage.setItem('refreshToken', response.refreshToken);
+      localStorage.setItem('currentUser', JSON.stringify({
+        id: response.userId,
+        email,
+        role: 'PATIENT',
+        profile: decryptedProfile
+      }));
+
+      // Stocker la clé AES en mémoire vive uniquement
+      storeEncryptionKey(encryptionKey);
+
+      setMessage('✅ Connexion réussie ! Redirection...');
+      setTimeout(() => navigate('/patient/dashboard'), 1000);
 
     } catch (error) {
       console.error('Erreur connexion:', error);
-      setMessage('❌ Erreur lors de la connexion: ' + error.message);
+      setMessage(`❌ ${error.message}`);
       setLoading(false);
     }
   };
-
-  const argon2Config = getArgon2Config();
 
   return (
     <div className="row">
@@ -100,21 +79,14 @@ export default function PatientLogin() {
           <div className="card-header bg-primary text-white text-center py-4">
             <i className="bi bi-shield-lock" style={{fontSize: '3rem'}}></i>
             <h2 className="mt-2 mb-0">Connexion Patient</h2>
-            <p className="mb-0 small">
-              🔐 Authentification Argon2id + AES-256
-              {argon2Ready && (
-                <span className="badge bg-success ms-2">
-                  <i className="bi bi-check-circle"></i> Argon2 Prêt
-                </span>
-              )}
-            </p>
+            <p className="mb-0 small">🔐 Authentification E2EE & Zero-Knowledge</p>
           </div>
 
           <div className="card-body p-4">
             {message && (
               <div className={`alert ${
                 message.includes('✅') ? 'alert-success' : 
-                message.includes('🔐') || message.includes('🔓') || message.includes('⏳') ? 'alert-info' : 
+                message.includes('🔓') || message.includes('🔄') ? 'alert-info' : 
                 'alert-danger'
               }`}>
                 {message}
@@ -123,9 +95,7 @@ export default function PatientLogin() {
 
             <div className="alert alert-info small mb-4">
               <i className="bi bi-info-circle-fill me-2"></i>
-              Votre mot de passe <strong>ne quitte jamais votre navigateur</strong>. 
-              Il est transformé par <strong>Argon2id</strong> (64MB RAM, résistant GPU) 
-              pour déchiffrer vos données localement.
+              Votre mot de passe <strong>ne quitte jamais votre navigateur en clair</strong>.
             </div>
 
             <div className="mb-3">
@@ -152,30 +122,21 @@ export default function PatientLogin() {
                 onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
                 disabled={loading}
               />
-              <small className="text-muted">
-                <i className="bi bi-unlock me-1"></i>
-                Utilisé pour dériver la clé Argon2id → AES-256
-              </small>
             </div>
 
             <button
               className="btn btn-primary btn-lg w-100 mb-3"
               onClick={handleLogin}
-              disabled={loading || !argon2Ready}
+              disabled={loading}
             >
               {loading ? (
                 <>
                   <span className="spinner-border spinner-border-sm me-2"></span>
-                  Dérivation Argon2id...
-                </>
-              ) : !argon2Ready ? (
-                <>
-                  <span className="spinner-border spinner-border-sm me-2"></span>
-                  Chargement Argon2...
+                  Connexion...
                 </>
               ) : (
                 <>
-                  <i className="bi bi-unlock-fill me-2"></i>
+                  <i className="bi bi-box-arrow-in-right me-2"></i>
                   Se connecter
                 </>
               )}
@@ -186,56 +147,6 @@ export default function PatientLogin() {
                 Pas encore de compte ? S'inscrire
               </Link>
             </div>
-          </div>
-
-          <div className="card-footer bg-light text-center">
-            <small className="text-muted">
-              <i className="bi bi-shield-check me-1"></i>
-              Zero-Knowledge • Argon2id • Vos données ne quittent jamais votre appareil en clair
-            </small>
-          </div>
-        </div>
-
-        {/* Informations techniques Argon2 */}
-        <div className="card mt-3 shadow">
-          <div className="card-body">
-            <h6 className="mb-3">
-              <i className="bi bi-gear-fill me-2 text-primary"></i>
-              Sécurité Argon2id (OWASP 2024)
-            </h6>
-            <div className="row small">
-              <div className="col-6">
-                <ul className="list-unstyled mb-0">
-                  <li className="mb-2">
-                    <i className="bi bi-memory text-info me-2"></i>
-                    <strong>Mémoire:</strong> {argon2Config.memoryMB} MB
-                  </li>
-                  <li className="mb-2">
-                    <i className="bi bi-arrow-repeat text-success me-2"></i>
-                    <strong>Itérations:</strong> {argon2Config.iterations}
-                  </li>
-                </ul>
-              </div>
-              <div className="col-6">
-                <ul className="list-unstyled mb-0">
-                  <li className="mb-2">
-                    <i className="bi bi-cpu text-warning me-2"></i>
-                    <strong>Parallelism:</strong> {argon2Config.parallelism}
-                  </li>
-                  <li className="mb-2">
-                    <i className="bi bi-key text-danger me-2"></i>
-                    <strong>Hash:</strong> {argon2Config.hashLength * 8} bits
-                  </li>
-                </ul>
-              </div>
-            </div>
-            <hr />
-            <p className="small text-muted mb-0">
-              <i className="bi bi-shield-fill-check text-success me-1"></i>
-              <strong>Argon2id</strong> est recommandé par OWASP car il est 
-              <strong> memory-hard</strong> (résistant aux attaques GPU/ASIC) et 
-              combine les avantages d'Argon2i (side-channel resistant) et Argon2d (GPU resistant).
-            </p>
           </div>
         </div>
       </div>

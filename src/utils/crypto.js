@@ -1,230 +1,263 @@
-
-const ARGON2_CONFIG = {
-  type: 2, // Argon2id (0 = Argon2d, 1 = Argon2i, 2 = Argon2id)
-  memory: 65536, // 64 MB en KB
-  iterations: 3, // Time cost
-  parallelism: 4, // Parallélisme
-  hashLength: 32, // 256 bits pour AES-256
-};
-
 /**
- * Dériver une clé AES-256 depuis un mot de passe avec Argon2id
- * @param {string} password - Mot de passe utilisateur
- * @param {Uint8Array} salt - Salt aléatoire (16 bytes minimum)
- * @returns {Promise<CryptoKey>} - Clé AES-GCM 256 bits
+ * CRYPTO UTILS - Zero-Knowledge Encryption Psy2Bib
+ * Conforme au whitepaper : PBKDF2 + AES-GCM
+ * Implémente les standards de l'API Web Crypto
  */
-export async function deriveKey(password, salt) {
-  // Vérifier que Argon2 est chargé
-  if (typeof window.argon2 === 'undefined') {
-    throw new Error('Argon2 n\'est pas chargé. Vérifiez que le script est inclus dans index.html');
+
+// ---- Utilitaires Encodage ----
+
+export function arrayBufferToBase64(uint8) {
+  let binary = '';
+  const chunkSize = 0x8000; // évite stack overflow
+  // S'assurer que c'est un Uint8Array
+  if (!(uint8 instanceof Uint8Array)) {
+    uint8 = new Uint8Array(uint8);
   }
-
-  // Convertir le salt en Uint8Array si nécessaire
-  let saltArray;
-  if (salt instanceof Uint8Array) {
-    saltArray = salt;
-  } else if (typeof salt === 'string') {
-    saltArray = base64ToArrayBuffer(salt);
-  } else {
-    saltArray = new Uint8Array(salt);
+  for (let i = 0; i < uint8.length; i += chunkSize) {
+    const chunk = uint8.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk);
   }
-
-  try {
-    // Dériver le hash avec Argon2id
-    const result = await window.argon2.hash({
-      pass: password,
-      salt: saltArray,
-      type: ARGON2_CONFIG.type,
-      mem: ARGON2_CONFIG.memory,
-      time: ARGON2_CONFIG.iterations,
-      parallelism: ARGON2_CONFIG.parallelism,
-      hashLen: ARGON2_CONFIG.hashLength,
-    });
-
-    // Convertir le hash en CryptoKey pour AES-GCM
-    const keyMaterial = result.hash; // Uint8Array de 32 bytes
-
-    const aesKey = await window.crypto.subtle.importKey(
-      'raw',
-      keyMaterial,
-      { name: 'AES-GCM', length: 256 },
-      true, // extractable
-      ['encrypt', 'decrypt']
-    );
-
-    return aesKey;
-  } catch (error) {
-    console.error('Erreur Argon2:', error);
-    throw new Error('Échec de la dérivation de clé Argon2: ' + error.message);
-  }
+  return btoa(binary);
 }
 
-/**
- * Générer un salt aléatoire (16 bytes)
- * @returns {Uint8Array}
- */
+export function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// Alias internes pour le code existant dans ce fichier
+const toBase64 = arrayBufferToBase64;
+const fromBase64 = base64ToArrayBuffer;
+
+// Rend la base64 URL-safe: remplace +/ par -_ et retire les =
+export function base64UrlEncode(uint8) {
+  return toBase64(uint8).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+// Reconvertit URL-safe vers base64 standard
+export function base64UrlDecode(str) {
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = base64.length % 4;
+  if (pad) base64 += '='.repeat(4 - pad);
+  return fromBase64(base64);
+}
+
+// ---- Génération sel / IV ----
+
 export function generateSalt() {
-  return window.crypto.getRandomValues(new Uint8Array(16));
+  return crypto.getRandomValues(new Uint8Array(16));
 }
 
-/**
- * Générer un IV (Initialization Vector) aléatoire (12 bytes pour AES-GCM)
- * @returns {Uint8Array}
- */
 export function generateIV() {
-  return window.crypto.getRandomValues(new Uint8Array(12));
+  return crypto.getRandomValues(new Uint8Array(12)); // recommandé pour AES-GCM
 }
 
-/**
- * Chiffrer des données avec AES-GCM
- * @param {any} data - Données à chiffrer (sera JSON.stringify)
- * @param {CryptoKey} key - Clé AES-GCM
- * @returns {Promise<string>} - Données chiffrées en Base64 (IV + ciphertext)
- */
-export async function encryptData(data, key) {
-  const encoder = new TextEncoder();
-  const dataBuffer = encoder.encode(JSON.stringify(data));
-  const iv = generateIV();
+// ---- Dérivation de clé (PBKDF2 → AES-GCM 256) ----
 
-  const encryptedBuffer = await window.crypto.subtle.encrypt(
+export async function deriveKey(password, salt) {
+  if (typeof password !== 'string' || !password) {
+    throw new Error('Le mot de passe doit être une chaîne non vide.');
+  }
+  // Autoriser salt en string base64/urlsafe ou Uint8Array
+  let saltBytes;
+  if (salt instanceof Uint8Array) {
+    saltBytes = salt;
+  } else if (typeof salt === 'string') {
+    // On accepte base64 ou base64-url
+    const isUrlSafe = /[-_]/.test(salt);
+    saltBytes = isUrlSafe ? base64UrlDecode(salt) : fromBase64(salt);
+  } else {
+    throw new Error('Le salt doit être Uint8Array ou chaîne Base64/Base64-URL.');
+  }
+  if (saltBytes.length < 8) {
+    throw new Error('Le salt doit faire au moins 8 octets (recommandé: 16).');
+  }
+
+  const encoder = new TextEncoder();
+  const passwordBuffer = encoder.encode(password);
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    passwordBuffer,
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits', 'deriveKey']
+  );
+
+  return crypto.subtle.deriveKey(
     {
-      name: 'AES-GCM',
-      iv: iv,
+      name: 'PBKDF2',
+      salt: saltBytes,
+      iterations: 100000, // conforme à votre whitepaper
+      hash: 'SHA-256',
     },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    true, // extractable: true (si vous devez exporter la clé), sinon mettre false
+    ['encrypt', 'decrypt']
+  );
+}
+
+// ---- Chiffrement / Déchiffrement ----
+
+export async function encryptData(data, key) {
+  if (!(key instanceof CryptoKey)) {
+    throw new Error('La clé doit être une CryptoKey AES-GCM.');
+  }
+  const encoder = new TextEncoder();
+  const iv = generateIV();
+  const payload = typeof data === 'string' ? data : JSON.stringify(data);
+  const dataBuffer = encoder.encode(payload);
+
+  const encryptedBuffer = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
     key,
     dataBuffer
   );
 
-  // Combiner IV + données chiffrées
+  // Format: [IV || ciphertext]
   const combined = new Uint8Array(iv.length + encryptedBuffer.byteLength);
   combined.set(iv, 0);
   combined.set(new Uint8Array(encryptedBuffer), iv.length);
 
-  return arrayBufferToBase64(combined);
+  // Retour Base64 URL-safe
+  return base64UrlEncode(combined);
 }
 
-/**
- * Déchiffrer des données avec AES-GCM
- * @param {string} encryptedData - Données chiffrées en Base64
- * @param {CryptoKey} key - Clé AES-GCM
- * @returns {Promise<any>} - Données déchiffrées
- */
 export async function decryptData(encryptedData, key) {
+  if (!(key instanceof CryptoKey)) {
+    throw new Error('La clé doit être une CryptoKey AES-GCM.');
+  }
   try {
-    const combined = base64ToArrayBuffer(encryptedData);
+    const combined = base64UrlDecode(encryptedData);
+    if (combined.length < 13) {
+      throw new Error('Format de données chiffrées invalide.');
+    }
     const iv = combined.slice(0, 12);
     const data = combined.slice(12);
 
-    const decryptedBuffer = await window.crypto.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: iv,
-      },
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
       key,
       data
     );
 
     const decoder = new TextDecoder();
     const decryptedString = decoder.decode(decryptedBuffer);
-    return JSON.parse(decryptedString);
+
+    // On tente JSON, sinon on renvoie la chaîne
+    try {
+      return JSON.parse(decryptedString);
+    } catch (_) {
+      return decryptedString;
+    }
   } catch (error) {
     console.error('Erreur déchiffrement:', error);
-    throw new Error('Impossible de déchiffrer les données. Mot de passe incorrect ?');
+    throw new Error('Impossible de déchiffrer les données. Mot de passe/clé ou données invalides.');
   }
 }
 
-/**
- * Hash du mot de passe pour authentification serveur (SHA-256)
- * Note: Ce hash est différent de la clé Argon2, il sert uniquement
- * à vérifier l'identité côté serveur sans révéler le mot de passe
- * @param {string} password
- * @returns {Promise<string>} - Hash en Base64
- */
+// ---- Hash mot de passe (SHA-256) pour auth serveur ----
+
 export async function hashPassword(password) {
+  if (typeof password !== 'string') {
+    throw new Error('Le mot de passe doit être une chaîne.');
+  }
   const encoder = new TextEncoder();
   const data = encoder.encode(password);
-  const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
-  return arrayBufferToBase64(hashBuffer);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return base64UrlEncode(new Uint8Array(hashBuffer));
 }
 
-/**
- * Convertir ArrayBuffer/Uint8Array en Base64
- * @param {ArrayBuffer|Uint8Array} buffer
- * @returns {string}
- */
-export function arrayBufferToBase64(buffer) {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return window.btoa(binary);
-}
+// ---- Stockage clé en mémoire (pas de persistance) ----
 
-/**
- * Convertir Base64 en Uint8Array
- * @param {string} base64
- * @returns {Uint8Array}
- */
-export function base64ToArrayBuffer(base64) {
-  const binaryString = window.atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
-/**
- * Stocker la clé de chiffrement en mémoire uniquement
- * La clé n'est JAMAIS persistée sur disque
- * @param {CryptoKey} key
- */
 export function storeEncryptionKey(key) {
-  window.__E2EE_KEY__ = key;
-  sessionStorage.setItem('e2ee_active', 'true');
+  if (typeof window === 'undefined') return; // SSR / tests
+  window.__E2EE_KEY__ = key; // uniquement en mémoire
+  try {
+    sessionStorage.setItem('e2ee_active', 'true');
+  } catch (_) {
+    // sessionStorage peut être indisponible (private mode / SSR)
+  }
 }
 
-/**
- * Récupérer la clé de chiffrement depuis la mémoire
- * @returns {CryptoKey|undefined}
- */
 export function getEncryptionKey() {
+  if (typeof window === 'undefined') return undefined;
   return window.__E2EE_KEY__;
 }
 
-/**
- * Supprimer la clé de chiffrement (déconnexion)
- */
 export function clearEncryptionKey() {
+  if (typeof window === 'undefined') return;
   delete window.__E2EE_KEY__;
-  sessionStorage.removeItem('e2ee_active');
+  try {
+    sessionStorage.removeItem('e2ee_active');
+  } catch (_) {}
 }
 
-/**
- * Vérifier si une clé de chiffrement est active
- * @returns {boolean}
- */
 export function hasEncryptionKey() {
-  return !!window.__E2EE_KEY__ && sessionStorage.getItem('e2ee_active') === 'true';
+  if (typeof window === 'undefined') return false;
+  const activeFlag = (() => {
+    try {
+      return sessionStorage.getItem('e2ee_active') === 'true';
+    } catch (_) {
+      return false;
+    }
+  })();
+  return !!window.__E2EE_KEY__ && activeFlag;
 }
 
-/**
- * Vérifier si Argon2 est disponible
- * @returns {boolean}
- */
-export function isArgon2Available() {
-  return typeof window.argon2 !== 'undefined';
-}
+// ---- Helpers haut niveau: encrypt/decrypt avec mot de passe ----
 
 /**
- * Obtenir les informations de configuration Argon2
- * @returns {object}
+ * Chiffre un objet/chaîne avec un mot de passe.
+ * Retourne { salt, data } en Base64 URL-safe.
  */
-export function getArgon2Config() {
+export async function encryptWithPassword(payload, password) {
+  const salt = generateSalt();
+  const key = await deriveKey(password, salt);
+  const data = await encryptData(payload, key);
   return {
-    ...ARGON2_CONFIG,
-    typeName: 'Argon2id',
-    memoryMB: ARGON2_CONFIG.memory / 1024,
+    salt: base64UrlEncode(salt),
+    data,
   };
 }
+
+/**
+ * Déchiffre un objet/chaîne chiffré via encryptWithPassword.
+ * Attend { salt, data } en Base64 URL-safe.
+ */
+export async function decryptWithPassword(encrypted, password) {
+  if (!encrypted || typeof encrypted !== 'object') {
+    throw new Error('Format des données chiffrées invalide (objet attendu).');
+  }
+  const { salt, data } = encrypted;
+  const key = await deriveKey(password, salt);
+  return decryptData(data, key);
+}
+
+// ---- Export par défaut pour compatibilité avec `import CryptoUtils from '...'` ----
+
+const CryptoUtils = {
+  generateSalt,
+  generateIV,
+  deriveKey,
+  encryptData,
+  decryptData,
+  hashPassword,
+  storeEncryptionKey,
+  getEncryptionKey,
+  clearEncryptionKey,
+  hasEncryptionKey,
+  encryptWithPassword,
+  decryptWithPassword,
+  base64UrlEncode,
+  base64UrlDecode,
+  arrayBufferToBase64,
+  base64ToArrayBuffer,
+};
+
+export default CryptoUtils;

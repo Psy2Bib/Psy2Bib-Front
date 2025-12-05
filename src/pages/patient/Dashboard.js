@@ -1,49 +1,97 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { clearEncryptionKey, hasEncryptionKey } from '../../utils/crypto';
+import { getMyAppointments } from '../../utils/api';
 
 export default function PatientDashboard() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
-  const [appointments, setAppointments] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
-    totalAppointments: 0,
+    totalFutureAppointments: 0,
+    totalPastAppointments: 0,
     nextAppointment: null,
-    unreadMessages: 3
+    unreadMessages: 0 // Nécessiterait un endpoint backend spécifique
   });
+  const [recentActivity, setRecentActivity] = useState([]);
 
   useEffect(() => {
-    // Vérifier si l'utilisateur est connecté ET a une clé active
+    loadDashboardData();
+  }, [navigate]);
+
+  const loadDashboardData = async () => {
+    // 1. Vérification Auth
     const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-    
-    if (!currentUser.email || currentUser.role !== 'patient' || !hasEncryptionKey()) {
+    if (!currentUser.email || currentUser.role?.toUpperCase() !== 'PATIENT' || !hasEncryptionKey()) {
       navigate('/patient/login');
       return;
     }
-
     setUser(currentUser);
 
-    // Charger les rendez-vous (chiffrés en production)
-    const savedAppointments = JSON.parse(localStorage.getItem('appointments') || '[]');
-    setAppointments(savedAppointments);
-    
-    // Calculer les stats
-    const upcoming = savedAppointments.filter(apt => new Date(apt.date) >= new Date());
-    setStats({
-      totalAppointments: savedAppointments.length,
-      nextAppointment: upcoming[0] || null,
-      unreadMessages: 3
-    });
-  }, [navigate]);
+    try {
+      // 2. Récupération des RDV réels depuis l'API
+      const appointmentsData = await getMyAppointments();
+      // L'API retourne parfois { appointments: [...] } ou directement [...]
+      const appointmentsList = Array.isArray(appointmentsData) ? appointmentsData : (appointmentsData.appointments || []);
+
+      const now = new Date();
+
+      // Séparer Passés / Futurs
+      const past = appointmentsList.filter(apt => new Date(apt.date) < now);
+      const future = appointmentsList.filter(apt => new Date(apt.date) >= now);
+
+      // Trier les futurs par date croissante (le plus proche d'abord)
+      future.sort((a, b) => new Date(a.date) - new Date(b.date));
+      
+      // Trier les passés par date décroissante (le plus récent d'abord)
+      past.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      const nextApt = future.length > 0 ? future[0] : null;
+
+      // 3. Mettre à jour les stats
+      setStats({
+        totalFutureAppointments: future.length,
+        totalPastAppointments: past.length, // "Consultations" effectuées
+        nextAppointment: nextApt,
+        unreadMessages: 0 
+      });
+
+      // 4. Générer l'activité récente (Mix de RDV passés et futurs créés)
+      // Pour l'instant on affiche les 5 derniers RDV (passés ou futurs proches)
+      const allActivities = [...appointmentsList]
+        .sort((a, b) => new Date(b.createdAt || b.date) - new Date(a.createdAt || a.date)) // Idéalement on utiliserait createdAt
+        .slice(0, 5)
+        .map(apt => ({
+          type: new Date(apt.date) < now ? 'past_consultation' : 'future_appointment',
+          date: apt.date,
+          psyName: apt.psy ? `${apt.psy.firstName} ${apt.psy.lastName}` : 'Psychologue',
+          status: apt.status
+        }));
+
+      setRecentActivity(allActivities);
+
+    } catch (err) {
+      console.error("Erreur chargement dashboard:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogout = () => {
-    // Supprimer la clé de chiffrement de la mémoire
     clearEncryptionKey();
     localStorage.removeItem('currentUser');
     navigate('/patient/login');
   };
 
-  if (!user) return null;
+  if (!user || loading) {
+    return (
+      <div className="d-flex justify-content-center align-items-center vh-100">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Chargement...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -74,8 +122,8 @@ export default function PatientDashboard() {
             <div className="card-body">
               <div className="d-flex justify-content-between align-items-center">
                 <div>
-                  <h6 className="text-white-50 mb-1">Rendez-vous</h6>
-                  <h2 className="mb-0">{stats.totalAppointments}</h2>
+                  <h6 className="text-white-50 mb-1">Rendez-vous à venir</h6>
+                  <h2 className="mb-0">{stats.totalFutureAppointments}</h2>
                 </div>
                 <i className="bi bi-calendar-check" style={{fontSize: '3rem', opacity: 0.3}}></i>
               </div>
@@ -102,8 +150,8 @@ export default function PatientDashboard() {
             <div className="card-body">
               <div className="d-flex justify-content-between align-items-center">
                 <div>
-                  <h6 className="text-white-50 mb-1">Consultations</h6>
-                  <h2 className="mb-0">12</h2>
+                  <h6 className="text-white-50 mb-1">Consultations Passées</h6>
+                  <h2 className="mb-0">{stats.totalPastAppointments}</h2>
                 </div>
                 <i className="bi bi-graph-up" style={{fontSize: '3rem', opacity: 0.3}}></i>
               </div>
@@ -176,7 +224,7 @@ export default function PatientDashboard() {
       {/* Prochain rendez-vous */}
       <div className="row">
         <div className="col-12 col-lg-6 mb-4">
-          <div className="card shadow">
+          <div className="card shadow h-100">
             <div className="card-header bg-primary text-white">
               <h5 className="mb-0">
                 <i className="bi bi-calendar-event me-2"></i>
@@ -186,10 +234,10 @@ export default function PatientDashboard() {
             <div className="card-body">
               {stats.nextAppointment ? (
                 <div>
-                  <h5 className="mb-3">{stats.nextAppointment.psychologist}</h5>
+                  <h5 className="mb-3">Dr. {stats.nextAppointment.psy?.firstName} {stats.nextAppointment.psy?.lastName}</h5>
                   <p className="mb-2">
                     <i className="bi bi-bookmark me-2 text-muted"></i>
-                    {stats.nextAppointment.specialty}
+                    {stats.nextAppointment.type === 'ONLINE' ? 'Consultation Vidéo' : 'Cabinet'}
                   </p>
                   <p className="mb-2">
                     <i className="bi bi-calendar3 me-2 text-muted"></i>
@@ -202,19 +250,22 @@ export default function PatientDashboard() {
                   </p>
                   <p className="mb-3">
                     <i className="bi bi-clock me-2 text-muted"></i>
-                    {stats.nextAppointment.time}
+                    {new Date(stats.nextAppointment.date).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}
                   </p>
-                  <Link to="/visio" className="btn btn-success w-100">
+                  <button 
+                    className="btn btn-success w-100"
+                    onClick={() => navigate('/visio', { state: { appointment: stats.nextAppointment } })}
+                  >
                     <i className="bi bi-camera-video me-2"></i>
                     Rejoindre avec Avatar 3D
-                  </Link>
+                  </button>
                 </div>
               ) : (
                 <div className="text-center text-muted py-4">
                   <i className="bi bi-calendar-x" style={{fontSize: '3rem'}}></i>
                   <p className="mt-3">Aucun rendez-vous prévu</p>
-                  <Link to="/appointments" className="btn btn-primary">
-                    Prendre rendez-vous
+                  <Link to="/search" className="btn btn-primary">
+                    Trouver un psychologue
                   </Link>
                 </div>
               )}
@@ -223,7 +274,7 @@ export default function PatientDashboard() {
         </div>
 
         <div className="col-12 col-lg-6 mb-4">
-          <div className="card shadow">
+          <div className="card shadow h-100">
             <div className="card-header bg-info text-white">
               <h5 className="mb-0">
                 <i className="bi bi-clock-history me-2"></i>
@@ -232,27 +283,30 @@ export default function PatientDashboard() {
             </div>
             <div className="card-body">
               <div className="list-group list-group-flush">
-                <div className="list-group-item">
-                  <small className="text-muted">Il y a 2 jours</small>
-                  <p className="mb-0">
-                    <i className="bi bi-shield-check text-success me-2"></i>
-                    Consultation avec Dr. Martin (E2EE)
-                  </p>
-                </div>
-                <div className="list-group-item">
-                  <small className="text-muted">Il y a 5 jours</small>
-                  <p className="mb-0">
-                    <i className="bi bi-envelope-fill text-info me-2"></i>
-                    Message chiffré envoyé à Dr. Dupont
-                  </p>
-                </div>
-                <div className="list-group-item">
-                  <small className="text-muted">Il y a 1 semaine</small>
-                  <p className="mb-0">
-                    <i className="bi bi-calendar-check text-primary me-2"></i>
-                    Rendez-vous réservé
-                  </p>
-                </div>
+                {recentActivity.length > 0 ? (
+                  recentActivity.map((act, idx) => (
+                    <div key={idx} className="list-group-item">
+                      <div className="d-flex w-100 justify-content-between">
+                        <small className="text-muted">
+                          {new Date(act.date).toLocaleDateString()}
+                        </small>
+                        <small className={`badge bg-${act.status === 'CONFIRMED' ? 'success' : 'warning'}`}>
+                          {act.status}
+                        </small>
+                      </div>
+                      <p className="mb-1">
+                        {act.type === 'past_consultation' ? (
+                          <><i className="bi bi-check-circle-fill text-success me-2"></i>Consultation effectuée</>
+                        ) : (
+                          <><i className="bi bi-calendar-event text-primary me-2"></i>Rendez-vous planifié</>
+                        )}
+                         {' '}avec Dr. {act.psyName}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-center text-muted mt-3">Aucune activité récente.</p>
+                )}
               </div>
             </div>
           </div>
