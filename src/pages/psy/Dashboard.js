@@ -1,30 +1,77 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { clearEncryptionKey, hasEncryptionKey } from '../../utils/crypto';
+import { getPsyAppointments, createAvailability, getAvailabilities } from '../../utils/api';
 
 export default function PsyDashboard() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [availability, setAvailability] = useState([]);
-  const [newSlot, setNewSlot] = useState({ day: '', time: '' });
-  const [stats] = useState({
-    totalPatients: 15,
-    appointmentsToday: 3,
-    unreadMessages: 5,
-    weekRevenue: '1200€'
+  const [appointments, setAppointments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  
+  // Formulaire d'ajout simplifié (Date + Heure)
+  const [newSlot, setNewSlot] = useState({ date: '', time: '' });
+  
+  const [stats, setStats] = useState({
+    totalPatients: 0,
+    appointmentsToday: 0,
+    unreadMessages: 0,
+    weekRevenue: '0€'
   });
 
   useEffect(() => {
+    loadDashboardData();
+  }, [navigate]);
+
+  const loadDashboardData = async () => {
     const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-    if (!currentUser.email || currentUser.role !== 'psy' || !hasEncryptionKey()) {
+    // Pour le Psy, on ne vérifie pas hasEncryptionKey() car son profil est public/non chiffré ZK
+    if (!currentUser.email || (currentUser.role?.toUpperCase() !== 'PSY' && currentUser.role?.toUpperCase() !== 'PSYCHOLOGIST')) {
       navigate('/psy/login');
       return;
     }
+    
+    if (!currentUser.id) {
+      console.error("Dashboard: currentUser.id est manquant !", currentUser);
+      return;
+    }
+    console.log("PsyDashboard: Connected User ID:", currentUser.id);
+
     setUser(currentUser);
 
-    const savedAvailability = JSON.parse(localStorage.getItem('psy_availability') || '[]');
-    setAvailability(savedAvailability);
-  }, [navigate]);
+    try {
+      // 1. Charger les RDV
+      const apptsData = await getPsyAppointments();
+      const apptsList = Array.isArray(apptsData) ? apptsData : (apptsData.appointments || []);
+      setAppointments(apptsList);
+
+      // 2. Charger les dispos
+      const availsData = await getAvailabilities(currentUser.id);
+      // L'API retourne { psyId, slots: [...] }
+      const availsList = availsData.slots || (Array.isArray(availsData) ? availsData : []);
+      setAvailability(availsList);
+
+      // 3. Calculs Stats
+      const uniquePatients = new Set(apptsList.map(a => a.patient?.id)).size;
+      
+      const today = new Date().toDateString();
+      const todayAppts = apptsList.filter(a => new Date(a.date).toDateString() === today);
+      
+      
+      setStats({
+        totalPatients: uniquePatients,
+        appointmentsToday: todayAppts.length,
+        unreadMessages: 0, // TODO
+        weekRevenue: 'N/A' // TODO Paiement
+      });
+
+    } catch (err) {
+      console.error("Erreur dashboard psy:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogout = () => {
     clearEncryptionKey();
@@ -32,40 +79,52 @@ export default function PsyDashboard() {
     navigate('/psy/login');
   };
 
-  const handleAddSlot = () => {
-    if (!newSlot.day || !newSlot.time) {
-      alert('Veuillez sélectionner un jour et une heure');
+  const handleAddSlot = async () => {
+    if (!newSlot.date || !newSlot.time) {
+      alert('Veuillez sélectionner une date et une heure');
       return;
     }
 
-    const slot = {
-      id: Date.now(),
-      day: newSlot.day,
-      time: newSlot.time,
-      available: true
-    };
+    try {
 
-    const updated = [...availability, slot];
-    setAvailability(updated);
-    localStorage.setItem('psy_availability', JSON.stringify(updated));
-    setNewSlot({ day: '', time: '' });
+      
+      await createAvailability(
+        newSlot.date, 
+        newSlot.time, 
+        incrementTime(newSlot.time, 1), // +1h par défaut
+        true // isRemote par défaut
+      );
+      
+      alert('Créneau ajouté avec succès !');
+      setNewSlot({ date: '', time: '' });
+      loadDashboardData(); // Recharger
+    } catch (err) {
+      alert('Erreur ajout créneau: ' + err.message);
+    }
   };
 
-  const handleRemoveSlot = (id) => {
-    const updated = availability.filter(slot => slot.id !== id);
-    setAvailability(updated);
-    localStorage.setItem('psy_availability', JSON.stringify(updated));
+  // Helper pour ajouter 1h (format HH:mm)
+  const incrementTime = (time, hours) => {
+    const [h, m] = time.split(':').map(Number);
+    const newH = (h + hours) % 24;
+    return `${newH.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
   };
 
-  const toggleSlotAvailability = (id) => {
-    const updated = availability.map(slot =>
-      slot.id === id ? { ...slot, available: !slot.available } : slot
+  // Helper affichage RDV
+  const getAppointmentsForToday = () => {
+    const today = new Date().toDateString();
+    return appointments.filter(a => new Date(a.date).toDateString() === today);
+  };
+
+  if (!user || loading) {
+    return (
+      <div className="d-flex justify-content-center align-items-center vh-100">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Chargement...</span>
+        </div>
+      </div>
     );
-    setAvailability(updated);
-    localStorage.setItem('psy_availability', JSON.stringify(updated));
-  };
-
-  if (!user) return null;
+  }
 
   return (
     <div>
@@ -76,7 +135,7 @@ export default function PsyDashboard() {
             Espace Professionnel
           </h1>
           <p className="text-muted mb-0">
-            Bienvenue, <strong>Dr. {user.profile?.firstName || user.email.split('@')[0]}</strong>
+            Bienvenue, <strong>Dr. {user.profile?.firstName || user.email?.split('@')[0]}</strong>
             <span className="badge bg-success ms-2">
               <i className="bi bi-shield-check me-1"></i>
               E2EE Actif
@@ -96,7 +155,7 @@ export default function PsyDashboard() {
             <div className="card-body">
               <div className="d-flex justify-content-between align-items-center">
                 <div>
-                  <h6 className="text-white-50 mb-1">Patients</h6>
+                  <h6 className="text-white-50 mb-1">Patients Uniques</h6>
                   <h2 className="mb-0">{stats.totalPatients}</h2>
                 </div>
                 <i className="bi bi-people" style={{fontSize: '3rem', opacity: 0.3}}></i>
@@ -138,7 +197,7 @@ export default function PsyDashboard() {
             <div className="card-body">
               <div className="d-flex justify-content-between align-items-center">
                 <div>
-                  <h6 className="text-white-50 mb-1">Revenus/Semaine</h6>
+                  <h6 className="text-white-50 mb-1">Revenus</h6>
                   <h2 className="mb-0">{stats.weekRevenue}</h2>
                 </div>
                 <i className="bi bi-currency-euro" style={{fontSize: '3rem', opacity: 0.3}}></i>
@@ -151,81 +210,67 @@ export default function PsyDashboard() {
       {/* Gestion disponibilités */}
       <div className="row mb-4">
         <div className="col-12 col-lg-6 mb-4">
-          <div className="card shadow">
+          <div className="card shadow h-100">
             <div className="card-header bg-success text-white">
               <h5 className="mb-0">
                 <i className="bi bi-calendar-week me-2"></i>
-                Gérer mes disponibilités
+                Ajouter une disponibilité
               </h5>
             </div>
             <div className="card-body">
               <div className="row g-2 mb-3">
                 <div className="col-6">
-                  <select
-                    className="form-select"
-                    value={newSlot.day}
-                    onChange={(e) => setNewSlot({ ...newSlot, day: e.target.value })}
-                  >
-                    <option value="">Jour</option>
-                    <option value="Lundi">Lundi</option>
-                    <option value="Mardi">Mardi</option>
-                    <option value="Mercredi">Mercredi</option>
-                    <option value="Jeudi">Jeudi</option>
-                    <option value="Vendredi">Vendredi</option>
-                    <option value="Samedi">Samedi</option>
-                  </select>
+                  <label className="form-label small fw-bold">Date</label>
+                  <input 
+                    type="date" 
+                    className="form-control"
+                    value={newSlot.date}
+                    onChange={(e) => setNewSlot({ ...newSlot, date: e.target.value })}
+                    min={new Date().toISOString().split('T')[0]}
+                  />
                 </div>
                 <div className="col-6">
+                  <label className="form-label small fw-bold">Heure (Début)</label>
                   <select
                     className="form-select"
                     value={newSlot.time}
                     onChange={(e) => setNewSlot({ ...newSlot, time: e.target.value })}
                   >
-                    <option value="">Heure</option>
+                    <option value="">Choisir...</option>
+                    <option value="08:00">08:00</option>
                     <option value="09:00">09:00</option>
                     <option value="10:00">10:00</option>
                     <option value="11:00">11:00</option>
+                    <option value="13:00">13:00</option>
                     <option value="14:00">14:00</option>
                     <option value="15:00">15:00</option>
                     <option value="16:00">16:00</option>
                     <option value="17:00">17:00</option>
+                    <option value="18:00">18:00</option>
                   </select>
+                  <div className="form-text text-muted small mt-1">Durée auto: 1h</div>
                 </div>
               </div>
               <button className="btn btn-success w-100 mb-3" onClick={handleAddSlot}>
                 <i className="bi bi-plus-circle me-2"></i>
-                Ajouter un créneau
+                Publier le créneau
               </button>
 
-              <div className="list-group">
+              <h6 className="border-bottom pb-2 mb-3">Mes créneaux LIBRES (futurs)</h6>
+              <div className="list-group" style={{maxHeight: '250px', overflowY: 'auto'}}>
                 {availability.length === 0 ? (
                   <div className="text-center text-muted py-3">
                     <i className="bi bi-calendar-x" style={{fontSize: '2rem'}}></i>
-                    <p className="mt-2">Aucun créneau défini</p>
+                    <p className="mt-2">Aucun créneau libre public trouvé.</p>
                   </div>
                 ) : (
-                  availability.map(slot => (
-                    <div key={slot.id} className="list-group-item d-flex justify-content-between align-items-center">
+                  availability.map((slot, idx) => (
+                    <div key={idx} className="list-group-item d-flex justify-content-between align-items-center">
                       <div>
-                        <strong>{slot.day}</strong> à {slot.time}
-                        <span className={`ms-2 badge ${slot.available ? 'bg-success' : 'bg-secondary'}`}>
-                          {slot.available ? 'Disponible' : 'Occupé'}
-                        </span>
+                        <strong>{new Date(slot.start).toLocaleDateString()}</strong> <br/>
+                        {new Date(slot.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(slot.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </div>
-                      <div className="btn-group btn-group-sm">
-                        <button
-                          className="btn btn-outline-primary"
-                          onClick={() => toggleSlotAvailability(slot.id)}
-                        >
-                          <i className="bi bi-toggle-on"></i>
-                        </button>
-                        <button
-                          className="btn btn-outline-danger"
-                          onClick={() => handleRemoveSlot(slot.id)}
-                        >
-                          <i className="bi bi-trash"></i>
-                        </button>
-                      </div>
+                      <span className="badge bg-success">Libre</span>
                     </div>
                   ))
                 )}
@@ -236,7 +281,7 @@ export default function PsyDashboard() {
 
         {/* Rendez-vous du jour */}
         <div className="col-12 col-lg-6 mb-4">
-          <div className="card shadow">
+          <div className="card shadow h-100">
             <div className="card-header bg-primary text-white">
               <h5 className="mb-0">
                 <i className="bi bi-clock me-2"></i>
@@ -245,59 +290,39 @@ export default function PsyDashboard() {
             </div>
             <div className="card-body">
               <div className="list-group">
-                <div className="list-group-item">
-                  <div className="d-flex justify-content-between">
-                    <div>
-                      <h6 className="mb-1">
-                        <i className="bi bi-shield-lock text-success me-2"></i>
-                        Patient A. (Anonyme)
-                      </h6>
-                      <small className="text-muted">Première consultation</small>
+                {getAppointmentsForToday().length > 0 ? (
+                  getAppointmentsForToday().map(apt => (
+                    <div key={apt.id} className="list-group-item">
+                      <div className="d-flex justify-content-between">
+                        <div>
+                          <h6 className="mb-1">
+                            <i className="bi bi-person-fill text-primary me-2"></i>
+                            {apt.patient ? `${apt.patient.firstName} ${apt.patient.lastName}` : 'Patient Anonyme'}
+                          </h6>
+                          <small className="text-muted">
+                            {apt.type === 'ONLINE' ? 'Visio' : 'Cabinet'}
+                          </small>
+                        </div>
+                        <div className="text-end">
+                          <div className="fw-bold">
+                            {new Date(apt.date).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}
+                          </div>
+                          <button 
+                            className="btn btn-sm btn-success mt-1"
+                            onClick={() => navigate('/visio', { state: { appointment: apt } })}
+                          >
+                            <i className="bi bi-camera-video"></i> Rejoindre
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-end">
-                      <div className="fw-bold">10:00</div>
-                      <Link to="/visio" className="btn btn-sm btn-success mt-1">
-                        <i className="bi bi-camera-video"></i> Rejoindre
-                      </Link>
-                    </div>
+                  ))
+                ) : (
+                  <div className="text-center text-muted py-5">
+                    <i className="bi bi-calendar-check" style={{fontSize: '2rem'}}></i>
+                    <p className="mt-3">Aucun rendez-vous prévu aujourd'hui.</p>
                   </div>
-                </div>
-
-                <div className="list-group-item">
-                  <div className="d-flex justify-content-between">
-                    <div>
-                      <h6 className="mb-1">
-                        <i className="bi bi-shield-lock text-success me-2"></i>
-                        Patient B. (Anonyme)
-                      </h6>
-                      <small className="text-muted">Suivi mensuel</small>
-                    </div>
-                    <div className="text-end">
-                      <div className="fw-bold">14:00</div>
-                      <button className="btn btn-sm btn-outline-secondary mt-1" disabled>
-                        <i className="bi bi-camera-video"></i> À venir
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="list-group-item">
-                  <div className="d-flex justify-content-between">
-                    <div>
-                      <h6 className="mb-1">
-                        <i className="bi bi-shield-lock text-success me-2"></i>
-                        Patient C. (Anonyme)
-                      </h6>
-                      <small className="text-muted">Thérapie familiale</small>
-                    </div>
-                    <div className="text-end">
-                      <div className="fw-bold">16:00</div>
-                      <button className="btn btn-sm btn-outline-secondary mt-1" disabled>
-                        <i className="bi bi-camera-video"></i> À venir
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -329,7 +354,7 @@ export default function PsyDashboard() {
                     <div className="card text-center hover-shadow" style={{cursor: 'pointer'}}>
                       <div className="card-body">
                         <i className="bi bi-calendar-event text-primary" style={{fontSize: '2.5rem'}}></i>
-                        <p className="mt-2 mb-0 fw-bold">Agenda</p>
+                        <p className="mt-2 mb-0 fw-bold">Agenda Complet</p>
                       </div>
                     </div>
                   </Link>
