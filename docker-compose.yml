@@ -1,0 +1,17 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=http://localhost:4000
+    image: psy2bib-frontend:latest
+    container_name: psy2bib-frontend
+    ports:
+      - "8080:80"
+    networks:
+      - psy2bib-front-net
+
+networks:
+  psy2bib-front-net:
+    driver: bridge
