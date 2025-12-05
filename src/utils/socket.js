@@ -17,6 +17,7 @@ export const createSocketConnection = (namespace) => {
     reconnection: true,
   });
 
+  
   return socket;
 };
 
