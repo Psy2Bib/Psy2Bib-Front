@@ -4,11 +4,14 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        - VITE_API_URL=http://localhost:4000
+        VITE_API_URL: ${VITE_API_URL}
+        FRONT_PORT: ${FRONT_PORT}
     image: psy2bib-frontend:latest
     container_name: psy2bib-frontend
     ports:
-      - "8080:80"
+      - "${FRONT_PORT}:${FRONT_PORT}"
+    environment:
+      - FRONT_PORT=${FRONT_PORT}
     networks:
       - psy2bib-front-net
 
