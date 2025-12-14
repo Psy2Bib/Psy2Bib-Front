@@ -1,14 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { 
-  deriveKey, 
-  generateSalt, 
-  encryptData, 
-  arrayBufferToBase64, 
-  hashPassword,
-  isArgon2Available,
-  getArgon2Config 
-} from '../../utils/crypto';
+import { register } from '../../utils/auth';
+import { isArgon2Available, getArgon2Config } from '../../utils/crypto';
 
 export default function PatientRegister() {
   const [email, setEmail] = useState('');
@@ -18,6 +11,7 @@ export default function PatientRegister() {
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
   const [birthDate, setBirthDate] = useState('');
+  const [pseudo, setPseudo] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [argon2Ready, setArgon2Ready] = useState(false);
@@ -57,63 +51,44 @@ export default function PatientRegister() {
       return;
     }
 
-    // Vérifier si l'email existe déjà
-    if (localStorage.getItem(`patient:${email}`)) {
-      setMessage('❌ Cet email est déjà utilisé');
-      return;
-    }
-
     setLoading(true);
-    setMessage('🔐 Génération de la clé Argon2id (64MB RAM)...');
+    setMessage('🔐 Inscription en cours...');
 
     try {
-      // 1. Générer un salt aléatoire
-      const salt = generateSalt();
-      const saltBase64 = arrayBufferToBase64(salt);
-
-      // 2. Dériver la clé AES-256 avec Argon2id
-      setMessage('🔑 Dérivation Argon2id en cours...');
-      const encryptionKey = await deriveKey(password, salt);
-
-      // 3. Créer le profil utilisateur
-      const profile = {
+      // Utiliser le service d'authentification qui gère tout le chiffrement
+      const userData = await register({
+        email,
+        pseudo: pseudo || email.split('@')[0],
         firstName,
         lastName,
-        email,
-        phone: phone || null,
-        birthDate: birthDate || null,
-        registeredAt: new Date().toISOString(),
-        encryptionMethod: 'Argon2id + AES-256-GCM'
-      };
-
-      // 4. Chiffrer le profil avec AES-GCM
-      setMessage('🔒 Chiffrement AES-256-GCM...');
-      const encryptedProfile = await encryptData(profile, encryptionKey);
-
-      // 5. Hash du mot de passe pour l'authentification serveur
-      const passwordHash = await hashPassword(password);
-
-      // 6. Préparer les données à stocker
-      const userData = {
-        email,
-        passwordHash, // Pour vérification serveur uniquement
-        salt: saltBase64, // Nécessaire pour re-dériver la clé
-        encryptedProfile, // Profil chiffré AES-GCM
-        role: 'patient',
-        createdAt: new Date().toISOString(),
-        encryptionVersion: '2.0-argon2id'
-      };
-
-      // 7. Stocker (simulation backend)
-      localStorage.setItem(`patient:${email}`, JSON.stringify(userData));
+        phone,
+        birthDate,
+        role: 'PATIENT',
+      }, password);
 
       setMessage('✅ Inscription réussie ! Vos données sont chiffrées avec Argon2id + AES-256.');
-      setTimeout(() => navigate('/patient/login'), 2000);
+      setTimeout(() => {
+        // Rediriger selon le rôle
+        if (userData.role === 'PATIENT') {
+          navigate('/patient/dashboard');
+        } else if (userData.role === 'PSY') {
+          navigate('/psy/dashboard');
+        } else {
+          navigate('/');
+        }
+      }, 2000);
 
     } catch (error) {
       console.error('Erreur inscription:', error);
-      setMessage('❌ Erreur lors de l\'inscription: ' + error.message);
-    } finally {
+      
+      // Gérer les erreurs spécifiques
+      if (error.response?.status === 409) {
+        setMessage('❌ Cet email est déjà utilisé.');
+      } else if (error.response?.status === 400) {
+        setMessage('❌ Données invalides: ' + (error.response.data?.message || 'Vérifiez vos informations'));
+      } else {
+        setMessage('❌ Erreur lors de l\'inscription: ' + (error.message || 'Erreur inconnue'));
+      }
       setLoading(false);
     }
   };
@@ -205,6 +180,23 @@ export default function PatientRegister() {
               />
               <small className="text-muted">
                 <i className="bi bi-eye me-1"></i>Stocké en clair (authentification)
+              </small>
+            </div>
+
+            <div className="mb-3">
+              <label className="form-label fw-bold">
+                Pseudo <span className="text-danger">*</span>
+              </label>
+              <input
+                type="text"
+                className="form-control form-control-lg"
+                placeholder="jean_dupont"
+                value={pseudo}
+                onChange={(e) => setPseudo(e.target.value)}
+                disabled={loading}
+              />
+              <small className="text-muted">
+                <i className="bi bi-person me-1"></i>Nom d'utilisateur unique
               </small>
             </div>
 
