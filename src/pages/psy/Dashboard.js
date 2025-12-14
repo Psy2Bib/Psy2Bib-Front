@@ -1,71 +1,138 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { clearEncryptionKey, hasEncryptionKey } from '../../utils/crypto';
+import { logout, getUser, isAuthenticated, ensureAuthenticated } from '../../utils/auth';
+import { getPsyAppointments, createAvailabilities } from '../../utils/api';
+import { hasEncryptionKey } from '../../utils/crypto';
 
 export default function PsyDashboard() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
-  const [availability, setAvailability] = useState([]);
-  const [newSlot, setNewSlot] = useState({ day: '', time: '' });
-  const [stats] = useState({
-    totalPatients: 15,
-    appointmentsToday: 3,
-    unreadMessages: 5,
-    weekRevenue: '1200€'
+  const [appointments, setAppointments] = useState([]);
+  const [stats, setStats] = useState({
+    totalPatients: 0,
+    appointmentsToday: 0,
+    unreadMessages: 0,
+    weekRevenue: '0€'
   });
+  const [loading, setLoading] = useState(true);
+  const [newAvailability, setNewAvailability] = useState({
+    date: '',
+    startTime: '',
+    endTime: ''
+  });
+  const [creatingAvailability, setCreatingAvailability] = useState(false);
 
   useEffect(() => {
-    const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-    if (!currentUser.email || currentUser.role !== 'psy' || !hasEncryptionKey()) {
-      navigate('/psy/login');
-      return;
-    }
-    setUser(currentUser);
+    const loadDashboard = async () => {
+      try {
+        // Vérifier et rafraîchir l'authentification si nécessaire
+        const authenticated = await ensureAuthenticated();
+        if (!authenticated) {
+          navigate('/psy/login');
+          return;
+        }
 
-    const savedAvailability = JSON.parse(localStorage.getItem('psy_availability') || '[]');
-    setAvailability(savedAvailability);
+        const currentUser = getUser();
+        
+        if (!currentUser || currentUser.role !== 'PSY') {
+          navigate('/psy/login');
+          return;
+        }
+
+        setUser(currentUser);
+
+        // Charger les rendez-vous depuis le backend
+        try {
+          const response = await getPsyAppointments();
+          const appointmentsData = Array.isArray(response) ? response : (response.appointments || []);
+          setAppointments(appointmentsData);
+          
+          // Calculer les stats
+          const now = new Date();
+          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          const appointmentsToday = appointmentsData.filter(apt => {
+            if (!apt.scheduledStart) return false;
+            const aptDate = new Date(apt.scheduledStart);
+            return aptDate >= today && aptDate < new Date(today.getTime() + 24 * 60 * 60 * 1000);
+          });
+
+          // Compter les patients uniques
+          const uniquePatients = new Set(appointmentsData.map(apt => apt.patient?.id).filter(Boolean));
+
+          setStats({
+            totalPatients: uniquePatients.size,
+            appointmentsToday: appointmentsToday.length,
+            unreadMessages: 0, // TODO: charger depuis l'API
+            weekRevenue: '0€' // TODO: calculer depuis les rendez-vous
+          });
+        } catch (error) {
+          console.error('Erreur lors du chargement des rendez-vous:', error);
+          // Continuer même si les rendez-vous ne se chargent pas
+        }
+      } catch (error) {
+        console.error('Erreur lors du chargement du dashboard:', error);
+        // Si erreur d'authentification, rediriger
+        if (error.response?.status === 401 || error.message?.includes('Session')) {
+          navigate('/psy/login');
+        } else {
+          setLoading(false);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDashboard();
   }, [navigate]);
 
-  const handleLogout = () => {
-    clearEncryptionKey();
-    localStorage.removeItem('currentUser');
+  const handleLogout = async () => {
+    await logout();
     navigate('/psy/login');
   };
 
-  const handleAddSlot = () => {
-    if (!newSlot.day || !newSlot.time) {
-      alert('Veuillez sélectionner un jour et une heure');
+  const handleCreateAvailability = async () => {
+    if (!newAvailability.date || !newAvailability.startTime || !newAvailability.endTime) {
+      alert('Veuillez remplir tous les champs');
       return;
     }
 
-    const slot = {
-      id: Date.now(),
-      day: newSlot.day,
-      time: newSlot.time,
-      available: true
-    };
-
-    const updated = [...availability, slot];
-    setAvailability(updated);
-    localStorage.setItem('psy_availability', JSON.stringify(updated));
-    setNewSlot({ day: '', time: '' });
+    setCreatingAvailability(true);
+    try {
+      await createAvailabilities(newAvailability);
+      alert('✅ Disponibilités créées avec succès !');
+      setNewAvailability({ date: '', startTime: '', endTime: '' });
+      // Recharger les rendez-vous pour mettre à jour les stats
+      const response = await getPsyAppointments();
+      const appointmentsData = Array.isArray(response) ? response : (response.appointments || []);
+      setAppointments(appointmentsData);
+    } catch (error) {
+      console.error('Erreur lors de la création des disponibilités:', error);
+      alert('❌ Erreur : ' + (error.message || 'Impossible de créer les disponibilités'));
+    } finally {
+      setCreatingAvailability(false);
+    }
   };
 
-  const handleRemoveSlot = (id) => {
-    const updated = availability.filter(slot => slot.id !== id);
-    setAvailability(updated);
-    localStorage.setItem('psy_availability', JSON.stringify(updated));
-  };
-
-  const toggleSlotAvailability = (id) => {
-    const updated = availability.map(slot =>
-      slot.id === id ? { ...slot, available: !slot.available } : slot
+  if (loading) {
+    return (
+      <div className="text-center py-5">
+        <div className="spinner-border text-success" role="status">
+          <span className="visually-hidden">Chargement...</span>
+        </div>
+      </div>
     );
-    setAvailability(updated);
-    localStorage.setItem('psy_availability', JSON.stringify(updated));
-  };
+  }
 
   if (!user) return null;
+
+  // Filtrer les rendez-vous d'aujourd'hui
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayAppointments = appointments.filter(apt => {
+    if (!apt.scheduledStart) return false;
+    const aptDate = new Date(apt.scheduledStart);
+    return aptDate >= today && aptDate < new Date(today.getTime() + 24 * 60 * 60 * 1000);
+  }).sort((a, b) => new Date(a.scheduledStart) - new Date(b.scheduledStart));
 
   return (
     <div>
@@ -76,11 +143,13 @@ export default function PsyDashboard() {
             Espace Professionnel
           </h1>
           <p className="text-muted mb-0">
-            Bienvenue, <strong>Dr. {user.profile?.firstName || user.email.split('@')[0]}</strong>
-            <span className="badge bg-success ms-2">
-              <i className="bi bi-shield-check me-1"></i>
-              E2EE Actif
-            </span>
+            Bienvenue, <strong>Dr. {user.profile?.firstName || user.pseudo || user.email.split('@')[0]}</strong>
+            {hasEncryptionKey() && (
+              <span className="badge bg-success ms-2">
+                <i className="bi bi-shield-check me-1"></i>
+                Chiffré E2EE
+              </span>
+            )}
           </p>
         </div>
         <button className="btn btn-outline-danger" onClick={handleLogout}>
@@ -155,81 +224,62 @@ export default function PsyDashboard() {
             <div className="card-header bg-success text-white">
               <h5 className="mb-0">
                 <i className="bi bi-calendar-week me-2"></i>
-                Gérer mes disponibilités
+                Créer des disponibilités
               </h5>
             </div>
             <div className="card-body">
+              <div className="mb-3">
+                <label className="form-label fw-bold">Date</label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={newAvailability.date}
+                  onChange={(e) => setNewAvailability({ ...newAvailability, date: e.target.value })}
+                  min={new Date().toISOString().split('T')[0]}
+                />
+              </div>
               <div className="row g-2 mb-3">
                 <div className="col-6">
-                  <select
-                    className="form-select"
-                    value={newSlot.day}
-                    onChange={(e) => setNewSlot({ ...newSlot, day: e.target.value })}
-                  >
-                    <option value="">Jour</option>
-                    <option value="Lundi">Lundi</option>
-                    <option value="Mardi">Mardi</option>
-                    <option value="Mercredi">Mercredi</option>
-                    <option value="Jeudi">Jeudi</option>
-                    <option value="Vendredi">Vendredi</option>
-                    <option value="Samedi">Samedi</option>
-                  </select>
+                  <label className="form-label fw-bold">Heure de début</label>
+                  <input
+                    type="time"
+                    className="form-control"
+                    value={newAvailability.startTime}
+                    onChange={(e) => setNewAvailability({ ...newAvailability, startTime: e.target.value })}
+                    step="1800"
+                  />
                 </div>
                 <div className="col-6">
-                  <select
-                    className="form-select"
-                    value={newSlot.time}
-                    onChange={(e) => setNewSlot({ ...newSlot, time: e.target.value })}
-                  >
-                    <option value="">Heure</option>
-                    <option value="09:00">09:00</option>
-                    <option value="10:00">10:00</option>
-                    <option value="11:00">11:00</option>
-                    <option value="14:00">14:00</option>
-                    <option value="15:00">15:00</option>
-                    <option value="16:00">16:00</option>
-                    <option value="17:00">17:00</option>
-                  </select>
+                  <label className="form-label fw-bold">Heure de fin</label>
+                  <input
+                    type="time"
+                    className="form-control"
+                    value={newAvailability.endTime}
+                    onChange={(e) => setNewAvailability({ ...newAvailability, endTime: e.target.value })}
+                    step="1800"
+                  />
                 </div>
               </div>
-              <button className="btn btn-success w-100 mb-3" onClick={handleAddSlot}>
-                <i className="bi bi-plus-circle me-2"></i>
-                Ajouter un créneau
-              </button>
-
-              <div className="list-group">
-                {availability.length === 0 ? (
-                  <div className="text-center text-muted py-3">
-                    <i className="bi bi-calendar-x" style={{fontSize: '2rem'}}></i>
-                    <p className="mt-2">Aucun créneau défini</p>
-                  </div>
+              <button 
+                className="btn btn-success w-100" 
+                onClick={handleCreateAvailability}
+                disabled={creatingAvailability}
+              >
+                {creatingAvailability ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm me-2"></span>
+                    Création...
+                  </>
                 ) : (
-                  availability.map(slot => (
-                    <div key={slot.id} className="list-group-item d-flex justify-content-between align-items-center">
-                      <div>
-                        <strong>{slot.day}</strong> à {slot.time}
-                        <span className={`ms-2 badge ${slot.available ? 'bg-success' : 'bg-secondary'}`}>
-                          {slot.available ? 'Disponible' : 'Occupé'}
-                        </span>
-                      </div>
-                      <div className="btn-group btn-group-sm">
-                        <button
-                          className="btn btn-outline-primary"
-                          onClick={() => toggleSlotAvailability(slot.id)}
-                        >
-                          <i className="bi bi-toggle-on"></i>
-                        </button>
-                        <button
-                          className="btn btn-outline-danger"
-                          onClick={() => handleRemoveSlot(slot.id)}
-                        >
-                          <i className="bi bi-trash"></i>
-                        </button>
-                      </div>
-                    </div>
-                  ))
+                  <>
+                    <i className="bi bi-plus-circle me-2"></i>
+                    Créer les créneaux
+                  </>
                 )}
-              </div>
+              </button>
+              <small className="text-muted d-block mt-2">
+                Les créneaux seront découpés en slots de 30 minutes automatiquement
+              </small>
             </div>
           </div>
         </div>
@@ -244,61 +294,43 @@ export default function PsyDashboard() {
               </h5>
             </div>
             <div className="card-body">
-              <div className="list-group">
-                <div className="list-group-item">
-                  <div className="d-flex justify-content-between">
-                    <div>
-                      <h6 className="mb-1">
-                        <i className="bi bi-shield-lock text-success me-2"></i>
-                        Patient A. (Anonyme)
-                      </h6>
-                      <small className="text-muted">Première consultation</small>
-                    </div>
-                    <div className="text-end">
-                      <div className="fw-bold">10:00</div>
-                      <Link to="/visio" className="btn btn-sm btn-success mt-1">
-                        <i className="bi bi-camera-video"></i> Rejoindre
-                      </Link>
-                    </div>
-                  </div>
+              {todayAppointments.length === 0 ? (
+                <div className="text-center text-muted py-4">
+                  <i className="bi bi-calendar-x" style={{fontSize: '3rem'}}></i>
+                  <p className="mt-3">Aucun rendez-vous aujourd'hui</p>
                 </div>
-
-                <div className="list-group-item">
-                  <div className="d-flex justify-content-between">
-                    <div>
-                      <h6 className="mb-1">
-                        <i className="bi bi-shield-lock text-success me-2"></i>
-                        Patient B. (Anonyme)
-                      </h6>
-                      <small className="text-muted">Suivi mensuel</small>
+              ) : (
+                <div className="list-group">
+                  {todayAppointments.map(apt => (
+                    <div key={apt.id} className="list-group-item">
+                      <div className="d-flex justify-content-between">
+                        <div>
+                          <h6 className="mb-1">
+                            <i className="bi bi-shield-lock text-success me-2"></i>
+                            Patient {apt.patient?.pseudo || 'Anonyme'}
+                          </h6>
+                          <small className="text-muted">
+                            {apt.type === 'ONLINE' ? 'Visio' : 'Cabinet'} • {apt.status}
+                          </small>
+                        </div>
+                        <div className="text-end">
+                          <div className="fw-bold">
+                            {apt.scheduledStart ? new Date(apt.scheduledStart).toLocaleTimeString('fr-FR', {
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            }) : 'N/A'}
+                          </div>
+                          {apt.type === 'ONLINE' && apt.meetingId && (
+                            <Link to={`/visio?meeting=${apt.meetingId}`} className="btn btn-sm btn-success mt-1">
+                              <i className="bi bi-camera-video"></i> Rejoindre
+                            </Link>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-end">
-                      <div className="fw-bold">14:00</div>
-                      <button className="btn btn-sm btn-outline-secondary mt-1" disabled>
-                        <i className="bi bi-camera-video"></i> À venir
-                      </button>
-                    </div>
-                  </div>
+                  ))}
                 </div>
-
-                <div className="list-group-item">
-                  <div className="d-flex justify-content-between">
-                    <div>
-                      <h6 className="mb-1">
-                        <i className="bi bi-shield-lock text-success me-2"></i>
-                        Patient C. (Anonyme)
-                      </h6>
-                      <small className="text-muted">Thérapie familiale</small>
-                    </div>
-                    <div className="text-end">
-                      <div className="fw-bold">16:00</div>
-                      <button className="btn btn-sm btn-outline-secondary mt-1" disabled>
-                        <i className="bi bi-camera-video"></i> À venir
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
           </div>
         </div>
@@ -309,7 +341,10 @@ export default function PsyDashboard() {
         <div className="col-12">
           <div className="card shadow">
             <div className="card-header">
-              <h5 className="mb-0">Accès Rapide</h5>
+              <h5 className="mb-0">
+                <i className="bi bi-lightning-charge me-2"></i>
+                Accès Rapide
+              </h5>
             </div>
             <div className="card-body">
               <div className="row g-3">
@@ -354,6 +389,20 @@ export default function PsyDashboard() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bandeau sécurité */}
+      <div className="alert alert-success shadow mt-4">
+        <div className="d-flex align-items-center">
+          <i className="bi bi-shield-fill-check me-3" style={{fontSize: '2rem'}}></i>
+          <div>
+            <strong>Vos données sont protégées</strong>
+            <p className="mb-0 small">
+              Chiffrement AES-256 • Argon2id 64MB • Zero-Knowledge • 
+              Le serveur ne peut jamais lire vos informations professionnelles
+            </p>
           </div>
         </div>
       </div>
