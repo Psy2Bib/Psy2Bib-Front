@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { logout, getUser, isAuthenticated } from '../../utils/auth';
+import { logout, getUser, isAuthenticated, ensureAuthenticated } from '../../utils/auth';
 import { getMyAppointments } from '../../utils/api';
 import { hasEncryptionKey } from '../../utils/crypto';
 
@@ -17,31 +17,32 @@ export default function PatientDashboard() {
 
   useEffect(() => {
     const loadDashboard = async () => {
-      // Vérifier si l'utilisateur est connecté
-      if (!isAuthenticated()) {
-        navigate('/patient/login');
-        return;
-      }
-
-      const currentUser = getUser();
-      
-      if (!currentUser || currentUser.role !== 'PATIENT') {
-        navigate('/patient/login');
-        return;
-      }
-
-      setUser(currentUser);
-
       try {
+        // Vérifier et rafraîchir l'authentification si nécessaire
+        const authenticated = await ensureAuthenticated();
+        if (!authenticated) {
+          navigate('/patient/login');
+          return;
+        }
+
+        const currentUser = getUser();
+        
+        if (!currentUser || currentUser.role !== 'PATIENT') {
+          navigate('/patient/login');
+          return;
+        }
+
+        setUser(currentUser);
+
         // Charger les rendez-vous depuis le backend
         const response = await getMyAppointments();
-        const appointmentsData = response.appointments || [];
+        const appointmentsData = Array.isArray(response) ? response : (response.appointments || []);
         setAppointments(appointmentsData);
         
         // Calculer les stats
         const now = new Date();
         const upcoming = appointmentsData
-          .filter(apt => new Date(apt.scheduledStart) >= now)
+          .filter(apt => apt.scheduledStart && new Date(apt.scheduledStart) >= now)
           .sort((a, b) => new Date(a.scheduledStart) - new Date(b.scheduledStart));
         
         setStats({
@@ -51,9 +52,12 @@ export default function PatientDashboard() {
         });
       } catch (error) {
         console.error('Erreur lors du chargement du dashboard:', error);
-        if (error.response?.status === 401) {
-          // Token expiré, rediriger vers login
+        // Si erreur d'authentification, rediriger
+        if (error.response?.status === 401 || error.message?.includes('Session')) {
           navigate('/patient/login');
+        } else {
+          // Autre erreur, afficher un message mais ne pas rediriger
+          setLoading(false);
         }
       } finally {
         setLoading(false);

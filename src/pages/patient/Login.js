@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { login } from '../../utils/auth';
+import { login, getRedirectUrl } from '../../utils/auth';
 import { isArgon2Available, getArgon2Config } from '../../utils/crypto';
 
 export default function PatientLogin() {
@@ -24,9 +24,32 @@ export default function PatientLogin() {
     checkArgon2();
   }, []);
 
-  const handleLogin = async () => {
-    if (!email || !password) {
-      setMessage('⚠️ Veuillez remplir tous les champs');
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const handleLogin = async (e) => {
+    e?.preventDefault();
+    
+    // Validation
+    if (!email.trim()) {
+      setMessage('⚠️ Veuillez saisir votre email');
+      return;
+    }
+
+    if (!validateEmail(email)) {
+      setMessage('⚠️ Format d\'email invalide');
+      return;
+    }
+
+    if (!password) {
+      setMessage('⚠️ Veuillez saisir votre mot de passe');
+      return;
+    }
+
+    if (password.length < 8) {
+      setMessage('⚠️ Le mot de passe doit contenir au moins 8 caractères');
       return;
     }
 
@@ -40,31 +63,20 @@ export default function PatientLogin() {
 
     try {
       // Utiliser le service d'authentification qui gère tout
-      const userData = await login(email, password);
+      const userData = await login(email.trim(), password);
 
       setMessage('✅ Connexion réussie ! Redirection...');
       setTimeout(() => {
         // Rediriger selon le rôle
-        if (userData.role === 'PATIENT') {
-          navigate('/patient/dashboard');
-        } else if (userData.role === 'PSY') {
-          navigate('/psy/dashboard');
-        } else {
-          navigate('/');
-        }
-      }, 1500);
+        const redirectUrl = getRedirectUrl(userData.role);
+        navigate(redirectUrl);
+      }, 1000);
 
     } catch (error) {
       console.error('Erreur connexion:', error);
       
-      // Gérer les erreurs spécifiques
-      if (error.response?.status === 401) {
-        setMessage('❌ Email ou mot de passe incorrect.');
-      } else if (error.response?.status === 404) {
-        setMessage('❌ Compte non trouvé. Veuillez vous inscrire.');
-      } else {
-        setMessage('❌ Erreur lors de la connexion: ' + (error.message || 'Erreur inconnue'));
-      }
+      // Afficher le message d'erreur de manière claire
+      setMessage(error.message || '❌ Erreur lors de la connexion. Veuillez réessayer.');
       setLoading(false);
     }
   };
@@ -106,41 +118,45 @@ export default function PatientLogin() {
               pour déchiffrer vos données localement.
             </div>
 
-            <div className="mb-3">
-              <label className="form-label fw-bold">Email</label>
-              <input
-                type="email"
-                className="form-control form-control-lg"
-                placeholder="votre@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                disabled={loading}
-              />
-            </div>
+            <form onSubmit={handleLogin}>
+              <div className="mb-3">
+                <label className="form-label fw-bold">Email</label>
+                <input
+                  type="email"
+                  className="form-control form-control-lg"
+                  placeholder="votre@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading}
+                  required
+                  autoComplete="email"
+                />
+              </div>
 
-            <div className="mb-4">
-              <label className="form-label fw-bold">Mot de passe</label>
-              <input
-                type="password"
-                className="form-control form-control-lg"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                disabled={loading}
-              />
-              <small className="text-muted">
-                <i className="bi bi-unlock me-1"></i>
-                Utilisé pour dériver la clé Argon2id → AES-256
-              </small>
-            </div>
+              <div className="mb-4">
+                <label className="form-label fw-bold">Mot de passe</label>
+                <input
+                  type="password"
+                  className="form-control form-control-lg"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={loading}
+                  required
+                  autoComplete="current-password"
+                  minLength={8}
+                />
+                <small className="text-muted">
+                  <i className="bi bi-unlock me-1"></i>
+                  Utilisé pour dériver la clé Argon2id → AES-256
+                </small>
+              </div>
 
-            <button
-              className="btn btn-primary btn-lg w-100 mb-3"
-              onClick={handleLogin}
-              disabled={loading || !argon2Ready}
-            >
+              <button
+                type="submit"
+                className="btn btn-primary btn-lg w-100 mb-3"
+                disabled={loading || !argon2Ready}
+              >
               {loading ? (
                 <>
                   <span className="spinner-border spinner-border-sm me-2"></span>
@@ -157,7 +173,8 @@ export default function PatientLogin() {
                   Se connecter
                 </>
               )}
-            </button>
+              </button>
+            </form>
 
             <div className="text-center">
               <Link to="/patient/register" className="text-decoration-none">

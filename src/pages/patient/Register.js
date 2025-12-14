@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { register } from '../../utils/auth';
+import { register, getRedirectUrl } from '../../utils/auth';
 import { isArgon2Available, getArgon2Config } from '../../utils/crypto';
 
 export default function PatientRegister() {
@@ -29,20 +29,54 @@ export default function PatientRegister() {
     checkArgon2();
   }, []);
 
-  const handleRegister = async () => {
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const validatePassword = (pwd) => {
+    // Au moins 8 caractères, une majuscule, une minuscule, un chiffre
+    const hasMinLength = pwd.length >= 8;
+    const hasUpperCase = /[A-Z]/.test(pwd);
+    const hasLowerCase = /[a-z]/.test(pwd);
+    const hasNumber = /[0-9]/.test(pwd);
+    
+    return {
+      valid: hasMinLength && hasUpperCase && hasLowerCase && hasNumber,
+      hasMinLength,
+      hasUpperCase,
+      hasLowerCase,
+      hasNumber,
+    };
+  };
+
+  const handleRegister = async (e) => {
+    e?.preventDefault();
+    
     // Validations
-    if (!email || !password || !confirmPassword || !firstName || !lastName) {
+    if (!email.trim() || !password || !confirmPassword || !firstName.trim() || !lastName.trim()) {
       setMessage('⚠️ Veuillez remplir tous les champs obligatoires');
+      return;
+    }
+
+    if (!validateEmail(email)) {
+      setMessage('⚠️ Format d\'email invalide');
+      return;
+    }
+
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.valid) {
+      const issues = [];
+      if (!passwordValidation.hasMinLength) issues.push('8 caractères minimum');
+      if (!passwordValidation.hasUpperCase) issues.push('une majuscule');
+      if (!passwordValidation.hasLowerCase) issues.push('une minuscule');
+      if (!passwordValidation.hasNumber) issues.push('un chiffre');
+      setMessage(`❌ Le mot de passe doit contenir : ${issues.join(', ')}`);
       return;
     }
 
     if (password !== confirmPassword) {
       setMessage('❌ Les mots de passe ne correspondent pas');
-      return;
-    }
-
-    if (password.length < 8) {
-      setMessage('❌ Le mot de passe doit contenir au moins 8 caractères');
       return;
     }
 
@@ -57,38 +91,24 @@ export default function PatientRegister() {
     try {
       // Utiliser le service d'authentification qui gère tout le chiffrement
       const userData = await register({
-        email,
-        pseudo: pseudo || email.split('@')[0],
-        firstName,
-        lastName,
-        phone,
-        birthDate,
+        email: email.trim(),
+        pseudo: (pseudo || email.split('@')[0]).trim(),
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        phone: phone.trim() || null,
+        birthDate: birthDate || null,
         role: 'PATIENT',
       }, password);
 
       setMessage('✅ Inscription réussie ! Vos données sont chiffrées avec Argon2id + AES-256.');
       setTimeout(() => {
-        // Rediriger selon le rôle
-        if (userData.role === 'PATIENT') {
-          navigate('/patient/dashboard');
-        } else if (userData.role === 'PSY') {
-          navigate('/psy/dashboard');
-        } else {
-          navigate('/');
-        }
-      }, 2000);
+        const redirectUrl = getRedirectUrl(userData.role);
+        navigate(redirectUrl);
+      }, 1500);
 
     } catch (error) {
       console.error('Erreur inscription:', error);
-      
-      // Gérer les erreurs spécifiques
-      if (error.response?.status === 409) {
-        setMessage('❌ Cet email est déjà utilisé.');
-      } else if (error.response?.status === 400) {
-        setMessage('❌ Données invalides: ' + (error.response.data?.message || 'Vérifiez vos informations'));
-      } else {
-        setMessage('❌ Erreur lors de l\'inscription: ' + (error.message || 'Erreur inconnue'));
-      }
+      setMessage(error.message || '❌ Erreur lors de l\'inscription. Veuillez réessayer.');
       setLoading(false);
     }
   };
@@ -130,119 +150,132 @@ export default function PatientRegister() {
               Le serveur ne peut <strong>jamais</strong> les lire.
             </div>
 
-            <div className="row">
-              <div className="col-md-6 mb-3">
-                <label className="form-label fw-bold">
-                  Prénom <span className="text-danger">*</span>
-                </label>
-                <input
-                  type="text"
-                  className="form-control form-control-lg"
-                  placeholder="Jean"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  disabled={loading}
-                />
+            <form onSubmit={handleRegister}>
+              <div className="row">
+                <div className="col-md-6 mb-3">
+                  <label className="form-label fw-bold">
+                    Prénom <span className="text-danger">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control form-control-lg"
+                    placeholder="Jean"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    disabled={loading}
+                    required
+                    autoComplete="given-name"
+                  />
                 <small className="text-muted">
                   <i className="bi bi-lock-fill me-1"></i>Chiffré E2EE
                 </small>
               </div>
 
-              <div className="col-md-6 mb-3">
-                <label className="form-label fw-bold">
-                  Nom <span className="text-danger">*</span>
-                </label>
-                <input
-                  type="text"
-                  className="form-control form-control-lg"
-                  placeholder="Dupont"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  disabled={loading}
-                />
+                <div className="col-md-6 mb-3">
+                  <label className="form-label fw-bold">
+                    Nom <span className="text-danger">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control form-control-lg"
+                    placeholder="Dupont"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    disabled={loading}
+                    required
+                    autoComplete="family-name"
+                  />
                 <small className="text-muted">
                   <i className="bi bi-lock-fill me-1"></i>Chiffré E2EE
                 </small>
               </div>
             </div>
 
-            <div className="mb-3">
-              <label className="form-label fw-bold">
-                Email <span className="text-danger">*</span>
-              </label>
-              <input
-                type="email"
-                className="form-control form-control-lg"
-                placeholder="jean.dupont@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={loading}
-              />
+              <div className="mb-3">
+                <label className="form-label fw-bold">
+                  Email <span className="text-danger">*</span>
+                </label>
+                <input
+                  type="email"
+                  className="form-control form-control-lg"
+                  placeholder="jean.dupont@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading}
+                  required
+                  autoComplete="email"
+                />
               <small className="text-muted">
                 <i className="bi bi-eye me-1"></i>Stocké en clair (authentification)
               </small>
             </div>
 
-            <div className="mb-3">
-              <label className="form-label fw-bold">
-                Pseudo <span className="text-danger">*</span>
-              </label>
-              <input
-                type="text"
-                className="form-control form-control-lg"
-                placeholder="jean_dupont"
-                value={pseudo}
-                onChange={(e) => setPseudo(e.target.value)}
-                disabled={loading}
-              />
+              <div className="mb-3">
+                <label className="form-label fw-bold">
+                  Pseudo <span className="text-danger">*</span>
+                </label>
+                <input
+                  type="text"
+                  className="form-control form-control-lg"
+                  placeholder="jean_dupont"
+                  value={pseudo}
+                  onChange={(e) => setPseudo(e.target.value)}
+                  disabled={loading}
+                  autoComplete="username"
+                />
               <small className="text-muted">
                 <i className="bi bi-person me-1"></i>Nom d'utilisateur unique
               </small>
             </div>
 
-            <div className="row">
-              <div className="col-md-6 mb-3">
-                <label className="form-label fw-bold">Téléphone</label>
-                <input
-                  type="tel"
-                  className="form-control form-control-lg"
-                  placeholder="06 12 34 56 78"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  disabled={loading}
-                />
+              <div className="row">
+                <div className="col-md-6 mb-3">
+                  <label className="form-label fw-bold">Téléphone</label>
+                  <input
+                    type="tel"
+                    className="form-control form-control-lg"
+                    placeholder="06 12 34 56 78"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    disabled={loading}
+                    autoComplete="tel"
+                  />
                 <small className="text-muted">
                   <i className="bi bi-lock-fill me-1"></i>Chiffré E2EE
                 </small>
               </div>
 
-              <div className="col-md-6 mb-3">
-                <label className="form-label fw-bold">Date de naissance</label>
-                <input
-                  type="date"
-                  className="form-control form-control-lg"
-                  value={birthDate}
-                  onChange={(e) => setBirthDate(e.target.value)}
-                  disabled={loading}
-                />
+                <div className="col-md-6 mb-3">
+                  <label className="form-label fw-bold">Date de naissance</label>
+                  <input
+                    type="date"
+                    className="form-control form-control-lg"
+                    value={birthDate}
+                    onChange={(e) => setBirthDate(e.target.value)}
+                    disabled={loading}
+                    autoComplete="bday"
+                  />
                 <small className="text-muted">
                   <i className="bi bi-lock-fill me-1"></i>Chiffré E2EE
                 </small>
               </div>
             </div>
 
-            <div className="mb-3">
-              <label className="form-label fw-bold">
-                Mot de passe <span className="text-danger">*</span>
-              </label>
-              <input
-                type="password"
-                className="form-control form-control-lg"
-                placeholder="Minimum 8 caractères"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={loading}
-              />
+              <div className="mb-3">
+                <label className="form-label fw-bold">
+                  Mot de passe <span className="text-danger">*</span>
+                </label>
+                <input
+                  type="password"
+                  className="form-control form-control-lg"
+                  placeholder="Minimum 8 caractères (maj, min, chiffre)"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={loading}
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                />
               <small className="text-muted">
                 <i className="bi bi-key me-1"></i>
                 Génère votre clé via Argon2id ({argon2Config.memoryMB}MB, {argon2Config.iterations} itérations)
@@ -284,7 +317,8 @@ export default function PatientRegister() {
                   S'inscrire (Zero-Knowledge)
                 </>
               )}
-            </button>
+              </button>
+            </form>
 
             <div className="text-center">
               <Link to="/patient/login" className="text-decoration-none">
