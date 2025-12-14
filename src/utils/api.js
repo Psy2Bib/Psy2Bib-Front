@@ -6,6 +6,7 @@
  */
 
 import axios from 'axios';
+import { getRedirectUrl } from './auth';
 
 // URL de base de l'API (à adapter selon l'environnement)
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5500';
@@ -13,10 +14,54 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5500';
 // Création de l'instance axios avec configuration de base
 const api = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 30000, // 30 secondes de timeout
   headers: {
     'Content-Type': 'application/json',
   },
 });
+
+/**
+ * Formater un message d'erreur lisible
+ * @param {Error} error - Erreur axios
+ * @returns {string} Message d'erreur formaté
+ */
+const formatErrorMessage = (error) => {
+  if (error.response) {
+    // Erreur avec réponse du serveur
+    const status = error.response.status;
+    const message = error.response.data?.message || error.response.data?.error || 'Erreur inconnue';
+
+    switch (status) {
+      case 400:
+        return `Données invalides : ${message}`;
+      case 401:
+        return 'Session expirée. Veuillez vous reconnecter.';
+      case 403:
+        return 'Accès refusé. Vous n\'avez pas les permissions nécessaires.';
+      case 404:
+        return 'Ressource non trouvée.';
+      case 409:
+        return `Conflit : ${message}`;
+      case 422:
+        return `Erreur de validation : ${message}`;
+      case 500:
+        return 'Erreur serveur. Veuillez réessayer plus tard.';
+      case 503:
+        return 'Service temporairement indisponible.';
+      default:
+        return `Erreur ${status} : ${message}`;
+    }
+  } else if (error.request) {
+    // Requête envoyée mais pas de réponse
+    if (error.code === 'ECONNABORTED') {
+      return 'La requête a pris trop de temps. Vérifiez votre connexion.';
+    }
+    return 'Impossible de contacter le serveur. Vérifiez votre connexion internet.';
+  } else {
+    // Erreur lors de la configuration de la requête
+    return error.message || 'Une erreur inattendue s\'est produite.';
+  }
+};
 
 /**
  * Intercepteur pour ajouter le token JWT à chaque requête
@@ -51,8 +96,9 @@ api.interceptors.response.use(
         if (!refreshToken) {
           // Pas de refresh token, rediriger vers login
           localStorage.clear();
-          window.location.href = '/patient/login';
-          return Promise.reject(error);
+          const role = localStorage.getItem('userRole') || 'PATIENT';
+          window.location.href = getRedirectUrl(role).replace('/dashboard', '/login');
+          return Promise.reject(new Error('Session expirée'));
         }
 
         // Tenter de rafraîchir le token
@@ -63,10 +109,15 @@ api.interceptors.response.use(
             headers: {
               Authorization: `Bearer ${refreshToken}`,
             },
+            timeout: 10000,
           }
         );
 
         const { accessToken: newAccessToken, refreshToken: newRefreshToken } = response.data;
+
+        if (!newAccessToken) {
+          throw new Error('Token de rafraîchissement invalide');
+        }
 
         // Sauvegarder les nouveaux tokens
         localStorage.setItem('accessToken', newAccessToken);
@@ -80,12 +131,19 @@ api.interceptors.response.use(
       } catch (refreshError) {
         // Le refresh a échoué, déconnecter l'utilisateur
         localStorage.clear();
-        window.location.href = '/patient/login';
-        return Promise.reject(refreshError);
+        const role = localStorage.getItem('userRole') || 'PATIENT';
+        window.location.href = getRedirectUrl(role).replace('/dashboard', '/login');
+        return Promise.reject(new Error('Session expirée. Veuillez vous reconnecter.'));
       }
     }
 
-    return Promise.reject(error);
+    // Formater l'erreur avec un message plus lisible
+    const formattedError = new Error(formatErrorMessage(error));
+    formattedError.response = error.response;
+    formattedError.request = error.request;
+    formattedError.config = error.config;
+    
+    return Promise.reject(formattedError);
   }
 );
 
@@ -127,6 +185,7 @@ export const refreshTokens = async () => {
       headers: {
         Authorization: `Bearer ${refreshToken}`,
       },
+      timeout: 10000,
     }
   );
   return response.data;
@@ -141,6 +200,7 @@ export const logout = async () => {
     await api.post('/auth/logout');
   } catch (error) {
     console.error('Erreur lors de la déconnexion:', error);
+    // On continue quand même le nettoyage local
   } finally {
     localStorage.clear();
   }
@@ -188,14 +248,27 @@ export const searchPsychologists = async (params = {}) => {
  * @deprecated Utilisez searchPsychologists() à la place
  */
 export const getPsychologistProfile = async (psyId) => {
+  if (!psyId) {
+    throw new Error('ID du psychologue requis');
+  }
+  
   // TODO: Implémenter GET /psychologists/:id dans le backend
   // Pour l'instant, on utilise la recherche
-  const results = await searchPsychologists({});
-  const profile = results.find(p => (p.id || p.userId) === psyId);
-  if (!profile) {
-    throw new Error('Psychologist not found');
+  try {
+    const results = await searchPsychologists({});
+    const profile = results.find(p => {
+      const id = p.id || p.userId || p.user?.id;
+      return id === psyId;
+    });
+    
+    if (!profile) {
+      throw new Error('Psychologue non trouvé');
+    }
+    
+    return profile;
+  } catch (error) {
+    throw new Error(`Impossible de récupérer le profil : ${error.message}`);
   }
-  return profile;
 };
 
 /**
@@ -225,6 +298,9 @@ export const updateMyPsychologistProfile = async (data) => {
  * @returns {Promise} Créneaux créés
  */
 export const createAvailabilities = async (data) => {
+  if (!data.date || !data.startTime || !data.endTime) {
+    throw new Error('Date, heure de début et heure de fin requises');
+  }
   const response = await api.post('/psy/availabilities', data);
   return response.data;
 };
@@ -235,6 +311,9 @@ export const createAvailabilities = async (data) => {
  * @returns {Promise}
  */
 export const deleteAvailability = async (availabilityId) => {
+  if (!availabilityId) {
+    throw new Error('ID de disponibilité requis');
+  }
   const response = await api.delete(`/psy/availabilities/${availabilityId}`);
   return response.data;
 };
@@ -245,6 +324,9 @@ export const deleteAvailability = async (availabilityId) => {
  * @returns {Promise} Liste des créneaux
  */
 export const getPsyAvailabilities = async (psyId) => {
+  if (!psyId) {
+    throw new Error('ID du psychologue requis');
+  }
   const response = await api.get(`/psy/${psyId}/availabilities`);
   return response.data;
 };
@@ -265,6 +347,12 @@ export const searchAvailabilities = async (params = {}) => {
  * @returns {Promise} Rendez-vous créé
  */
 export const bookAppointment = async (data) => {
+  if (!data.availabilityId || !data.type) {
+    throw new Error('ID de disponibilité et type de rendez-vous requis');
+  }
+  if (!['ONLINE', 'IN_PERSON'].includes(data.type)) {
+    throw new Error('Type de rendez-vous invalide (ONLINE ou IN_PERSON)');
+  }
   const response = await api.post('/appointments/book', data);
   return response.data;
 };
@@ -293,6 +381,9 @@ export const getPsyAppointments = async () => {
  * @returns {Promise} Rendez-vous annulé
  */
 export const cancelAppointment = async (appointmentId) => {
+  if (!appointmentId) {
+    throw new Error('ID du rendez-vous requis');
+  }
   const response = await api.patch(`/appointments/${appointmentId}/cancel`);
   return response.data;
 };
@@ -303,6 +394,9 @@ export const cancelAppointment = async (appointmentId) => {
  * @returns {Promise} Rendez-vous confirmé
  */
 export const confirmAppointment = async (appointmentId) => {
+  if (!appointmentId) {
+    throw new Error('ID du rendez-vous requis');
+  }
   const response = await api.patch(`/appointments/${appointmentId}/confirm`);
   return response.data;
 };
@@ -315,6 +409,9 @@ export const confirmAppointment = async (appointmentId) => {
  * @returns {Promise} Message envoyé
  */
 export const sendMessage = async (data) => {
+  if (!data.recipientId || !data.encryptedContent || !data.iv) {
+    throw new Error('recipientId, encryptedContent et iv requis');
+  }
   const response = await api.post('/chat/send', data);
   return response.data;
 };
@@ -325,6 +422,9 @@ export const sendMessage = async (data) => {
  * @returns {Promise} Liste des messages
  */
 export const getConversation = async (userId) => {
+  if (!userId) {
+    throw new Error('ID de l\'utilisateur requis');
+  }
   const response = await api.get(`/chat/conversation/${userId}`);
   return response.data;
 };
@@ -344,6 +444,9 @@ export const listThreads = async () => {
  * @returns {Promise}
  */
 export const markConversationAsRead = async (userId) => {
+  if (!userId) {
+    throw new Error('ID de l\'utilisateur requis');
+  }
   const response = await api.patch(`/chat/conversation/${userId}/read`);
   return response.data;
 };
@@ -363,6 +466,10 @@ export const getUnreadCount = async () => {
  * @returns {Promise} Chemin du fichier uploadé
  */
 export const uploadAttachment = async (file) => {
+  if (!file || !(file instanceof File)) {
+    throw new Error('Fichier invalide');
+  }
+  
   const formData = new FormData();
   formData.append('file', file);
   
@@ -370,6 +477,7 @@ export const uploadAttachment = async (file) => {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    timeout: 60000, // 60 secondes pour les uploads
   });
   return response.data;
 };
@@ -380,11 +488,14 @@ export const uploadAttachment = async (file) => {
  * @returns {Promise} Blob du fichier
  */
 export const downloadAttachment = async (filename) => {
+  if (!filename) {
+    throw new Error('Nom de fichier requis');
+  }
   const response = await api.get(`/chat/attachment/${filename}`, {
     responseType: 'blob',
+    timeout: 60000, // 60 secondes pour les téléchargements
   });
   return response.data;
 };
 
 export default api;
-
