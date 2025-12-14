@@ -1,13 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { 
-  deriveKey, 
-  decryptData, 
-  base64ToArrayBuffer, 
-  storeEncryptionKey,
-  isArgon2Available,
-  getArgon2Config 
-} from '../../utils/crypto';
+import { login } from '../../utils/auth';
+import { isArgon2Available, getArgon2Config } from '../../utils/crypto';
 
 export default function PatientLogin() {
   const [email, setEmail] = useState('');
@@ -42,51 +36,35 @@ export default function PatientLogin() {
     }
 
     setLoading(true);
-    setMessage('🔐 Dérivation Argon2id en cours (64MB RAM)...');
+    setMessage('🔐 Connexion en cours...');
 
     try {
-      // 1. Récupérer les données chiffrées (simulation backend)
-      const stored = localStorage.getItem(`patient:${email}`);
-      
-      if (!stored) {
-        setMessage('❌ Compte non trouvé. Veuillez vous inscrire.');
-        setLoading(false);
-        return;
-      }
+      // Utiliser le service d'authentification qui gère tout
+      const userData = await login(email, password);
 
-      const userData = JSON.parse(stored);
-
-      // 2. Récupérer le salt et re-dériver la clé AES avec Argon2id
-      const salt = base64ToArrayBuffer(userData.salt);
-      
-      setMessage('🔓 Déchiffrement AES-GCM en cours...');
-      const encryptionKey = await deriveKey(password, salt);
-
-      // 3. Tenter de déchiffrer le profil
-      try {
-        const decryptedProfile = await decryptData(userData.encryptedProfile, encryptionKey);
-        
-        // 4. Si le déchiffrement réussit, le mot de passe est correct
-        storeEncryptionKey(encryptionKey);
-
-        // 5. Stocker l'utilisateur connecté avec profil déchiffré
-        localStorage.setItem('currentUser', JSON.stringify({
-          email,
-          role: 'patient',
-          profile: decryptedProfile
-        }));
-
-        setMessage('✅ Connexion réussie ! Redirection...');
-        setTimeout(() => navigate('/patient/dashboard'), 1500);
-
-      } catch (decryptError) {
-        setMessage('❌ Mot de passe incorrect. Impossible de déchiffrer vos données.');
-        setLoading(false);
-      }
+      setMessage('✅ Connexion réussie ! Redirection...');
+      setTimeout(() => {
+        // Rediriger selon le rôle
+        if (userData.role === 'PATIENT') {
+          navigate('/patient/dashboard');
+        } else if (userData.role === 'PSY') {
+          navigate('/psy/dashboard');
+        } else {
+          navigate('/');
+        }
+      }, 1500);
 
     } catch (error) {
       console.error('Erreur connexion:', error);
-      setMessage('❌ Erreur lors de la connexion: ' + error.message);
+      
+      // Gérer les erreurs spécifiques
+      if (error.response?.status === 401) {
+        setMessage('❌ Email ou mot de passe incorrect.');
+      } else if (error.response?.status === 404) {
+        setMessage('❌ Compte non trouvé. Veuillez vous inscrire.');
+      } else {
+        setMessage('❌ Erreur lors de la connexion: ' + (error.message || 'Erreur inconnue'));
+      }
       setLoading(false);
     }
   };
