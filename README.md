@@ -171,5 +171,4 @@ Cette version utilise `localStorage` pour simuler un backend. En production :
 Si vous rencontrez des problèmes :
 1. Vérifiez que tous les fichiers sont dans `/src`
 2. Vérifiez la console navigateur (F12)
-3. Assurez-vous que `npm install` s'est terminé sans erreur
-
+3. Assurez-vous que 'npm install' s'est terminé sans erreur
