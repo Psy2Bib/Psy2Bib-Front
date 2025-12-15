@@ -1,13 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { 
-  deriveKey, 
-  decryptData, 
-  base64ToArrayBuffer, 
-  storeEncryptionKey,
-  isArgon2Available,
-  getArgon2Config 
-} from '../../utils/crypto';
+import { login, getRedirectUrl } from '../../utils/auth';
+import { isArgon2Available, getArgon2Config } from '../../utils/crypto';
 
 export default function PatientLogin() {
   const [email, setEmail] = useState('');
@@ -30,9 +24,32 @@ export default function PatientLogin() {
     checkArgon2();
   }, []);
 
-  const handleLogin = async () => {
-    if (!email || !password) {
-      setMessage('⚠️ Veuillez remplir tous les champs');
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const handleLogin = async (e) => {
+    e?.preventDefault();
+    
+    // Validation
+    if (!email.trim()) {
+      setMessage('⚠️ Veuillez saisir votre email');
+      return;
+    }
+
+    if (!validateEmail(email)) {
+      setMessage('⚠️ Format d\'email invalide');
+      return;
+    }
+
+    if (!password) {
+      setMessage('⚠️ Veuillez saisir votre mot de passe');
+      return;
+    }
+
+    if (password.length < 8) {
+      setMessage('⚠️ Le mot de passe doit contenir au moins 8 caractères');
       return;
     }
 
@@ -42,51 +59,24 @@ export default function PatientLogin() {
     }
 
     setLoading(true);
-    setMessage('🔐 Dérivation Argon2id en cours (64MB RAM)...');
+    setMessage('🔐 Connexion en cours...');
 
     try {
-      // 1. Récupérer les données chiffrées (simulation backend)
-      const stored = localStorage.getItem(`patient:${email}`);
-      
-      if (!stored) {
-        setMessage('❌ Compte non trouvé. Veuillez vous inscrire.');
-        setLoading(false);
-        return;
-      }
+      // Utiliser le service d'authentification qui gère tout
+      const userData = await login(email.trim(), password);
 
-      const userData = JSON.parse(stored);
-
-      // 2. Récupérer le salt et re-dériver la clé AES avec Argon2id
-      const salt = base64ToArrayBuffer(userData.salt);
-      
-      setMessage('🔓 Déchiffrement AES-GCM en cours...');
-      const encryptionKey = await deriveKey(password, salt);
-
-      // 3. Tenter de déchiffrer le profil
-      try {
-        const decryptedProfile = await decryptData(userData.encryptedProfile, encryptionKey);
-        
-        // 4. Si le déchiffrement réussit, le mot de passe est correct
-        storeEncryptionKey(encryptionKey);
-
-        // 5. Stocker l'utilisateur connecté avec profil déchiffré
-        localStorage.setItem('currentUser', JSON.stringify({
-          email,
-          role: 'patient',
-          profile: decryptedProfile
-        }));
-
-        setMessage('✅ Connexion réussie ! Redirection...');
-        setTimeout(() => navigate('/patient/dashboard'), 1500);
-
-      } catch (decryptError) {
-        setMessage('❌ Mot de passe incorrect. Impossible de déchiffrer vos données.');
-        setLoading(false);
-      }
+      setMessage('✅ Connexion réussie ! Redirection...');
+      setTimeout(() => {
+        // Rediriger selon le rôle
+        const redirectUrl = getRedirectUrl(userData.role);
+        navigate(redirectUrl);
+      }, 1000);
 
     } catch (error) {
       console.error('Erreur connexion:', error);
-      setMessage('❌ Erreur lors de la connexion: ' + error.message);
+      
+      // Afficher le message d'erreur de manière claire
+      setMessage(error.message || '❌ Erreur lors de la connexion. Veuillez réessayer.');
       setLoading(false);
     }
   };
@@ -128,41 +118,45 @@ export default function PatientLogin() {
               pour déchiffrer vos données localement.
             </div>
 
-            <div className="mb-3">
-              <label className="form-label fw-bold">Email</label>
-              <input
-                type="email"
-                className="form-control form-control-lg"
-                placeholder="votre@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                disabled={loading}
-              />
-            </div>
+            <form onSubmit={handleLogin}>
+              <div className="mb-3">
+                <label className="form-label fw-bold">Email</label>
+                <input
+                  type="email"
+                  className="form-control form-control-lg"
+                  placeholder="votre@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading}
+                  required
+                  autoComplete="email"
+                />
+              </div>
 
-            <div className="mb-4">
-              <label className="form-label fw-bold">Mot de passe</label>
-              <input
-                type="password"
-                className="form-control form-control-lg"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                disabled={loading}
-              />
-              <small className="text-muted">
-                <i className="bi bi-unlock me-1"></i>
-                Utilisé pour dériver la clé Argon2id → AES-256
-              </small>
-            </div>
+              <div className="mb-4">
+                <label className="form-label fw-bold">Mot de passe</label>
+                <input
+                  type="password"
+                  className="form-control form-control-lg"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={loading}
+                  required
+                  autoComplete="current-password"
+                  minLength={8}
+                />
+                <small className="text-muted">
+                  <i className="bi bi-unlock me-1"></i>
+                  Utilisé pour dériver la clé Argon2id → AES-256
+                </small>
+              </div>
 
-            <button
-              className="btn btn-primary btn-lg w-100 mb-3"
-              onClick={handleLogin}
-              disabled={loading || !argon2Ready}
-            >
+              <button
+                type="submit"
+                className="btn btn-primary btn-lg w-100 mb-3"
+                disabled={loading || !argon2Ready}
+              >
               {loading ? (
                 <>
                   <span className="spinner-border spinner-border-sm me-2"></span>
@@ -179,7 +173,8 @@ export default function PatientLogin() {
                   Se connecter
                 </>
               )}
-            </button>
+              </button>
+            </form>
 
             <div className="text-center">
               <Link to="/patient/register" className="text-decoration-none">
