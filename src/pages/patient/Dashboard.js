@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { clearEncryptionKey, hasEncryptionKey } from '../../utils/crypto';
+import { logout, getUser, isAuthenticated, ensureAuthenticated } from '../../utils/auth';
+import { getMyAppointments } from '../../utils/api';
+import { hasEncryptionKey } from '../../utils/crypto';
 
 export default function PatientDashboard() {
   const navigate = useNavigate();
@@ -9,39 +11,76 @@ export default function PatientDashboard() {
   const [stats, setStats] = useState({
     totalAppointments: 0,
     nextAppointment: null,
-    unreadMessages: 3
+    unreadMessages: 0
   });
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Vérifier si l'utilisateur est connecté ET a une clé active
-    const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-    
-    if (!currentUser.email || currentUser.role !== 'patient' || !hasEncryptionKey()) {
-      navigate('/patient/login');
-      return;
-    }
+    const loadDashboard = async () => {
+      try {
+        // Vérifier et rafraîchir l'authentification si nécessaire
+        const authenticated = await ensureAuthenticated();
+        if (!authenticated) {
+          navigate('/patient/login');
+          return;
+        }
 
-    setUser(currentUser);
+        const currentUser = getUser();
+        
+        if (!currentUser || currentUser.role !== 'PATIENT') {
+          navigate('/patient/login');
+          return;
+        }
 
-    // Charger les rendez-vous (chiffrés en production)
-    const savedAppointments = JSON.parse(localStorage.getItem('appointments') || '[]');
-    setAppointments(savedAppointments);
-    
-    // Calculer les stats
-    const upcoming = savedAppointments.filter(apt => new Date(apt.date) >= new Date());
-    setStats({
-      totalAppointments: savedAppointments.length,
-      nextAppointment: upcoming[0] || null,
-      unreadMessages: 3
-    });
+        setUser(currentUser);
+
+        // Charger les rendez-vous depuis le backend
+        const response = await getMyAppointments();
+        const appointmentsData = Array.isArray(response) ? response : (response.appointments || []);
+        setAppointments(appointmentsData);
+        
+        // Calculer les stats
+        const now = new Date();
+        const upcoming = appointmentsData
+          .filter(apt => apt.scheduledStart && new Date(apt.scheduledStart) >= now)
+          .sort((a, b) => new Date(a.scheduledStart) - new Date(b.scheduledStart));
+        
+        setStats({
+          totalAppointments: appointmentsData.length,
+          nextAppointment: upcoming[0] || null,
+          unreadMessages: 0 // TODO: charger depuis l'API
+        });
+      } catch (error) {
+        console.error('Erreur lors du chargement du dashboard:', error);
+        // Si erreur d'authentification, rediriger
+        if (error.response?.status === 401 || error.message?.includes('Session')) {
+          navigate('/patient/login');
+        } else {
+          // Autre erreur, afficher un message mais ne pas rediriger
+          setLoading(false);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDashboard();
   }, [navigate]);
 
-  const handleLogout = () => {
-    // Supprimer la clé de chiffrement de la mémoire
-    clearEncryptionKey();
-    localStorage.removeItem('currentUser');
+  const handleLogout = async () => {
+    await logout();
     navigate('/patient/login');
   };
+
+  if (loading) {
+    return (
+      <div className="text-center py-5">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Chargement...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) return null;
 
@@ -54,11 +93,13 @@ export default function PatientDashboard() {
             Tableau de bord Patient
           </h1>
           <p className="text-muted mb-0">
-            Bienvenue, <strong>{user.profile?.firstName || user.email}</strong>
-            <span className="badge bg-success ms-2">
-              <i className="bi bi-shield-check me-1"></i>
-              Chiffré E2EE
-            </span>
+            Bienvenue, <strong>{user.profile?.firstName || user.pseudo || user.email}</strong>
+            {hasEncryptionKey() && (
+              <span className="badge bg-success ms-2">
+                <i className="bi bi-shield-check me-1"></i>
+                Chiffré E2EE
+              </span>
+            )}
           </p>
         </div>
         <button className="btn btn-outline-danger" onClick={handleLogout}>
@@ -186,14 +227,12 @@ export default function PatientDashboard() {
             <div className="card-body">
               {stats.nextAppointment ? (
                 <div>
-                  <h5 className="mb-3">{stats.nextAppointment.psychologist}</h5>
-                  <p className="mb-2">
-                    <i className="bi bi-bookmark me-2 text-muted"></i>
-                    {stats.nextAppointment.specialty}
-                  </p>
+                  <h5 className="mb-3">
+                    {stats.nextAppointment.psy?.pseudo || 'Psychologue'}
+                  </h5>
                   <p className="mb-2">
                     <i className="bi bi-calendar3 me-2 text-muted"></i>
-                    {new Date(stats.nextAppointment.date).toLocaleDateString('fr-FR', {
+                    {new Date(stats.nextAppointment.scheduledStart).toLocaleDateString('fr-FR', {
                       weekday: 'long',
                       year: 'numeric',
                       month: 'long',
@@ -202,12 +241,25 @@ export default function PatientDashboard() {
                   </p>
                   <p className="mb-3">
                     <i className="bi bi-clock me-2 text-muted"></i>
-                    {stats.nextAppointment.time}
+                    {new Date(stats.nextAppointment.scheduledStart).toLocaleTimeString('fr-FR', {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
                   </p>
-                  <Link to="/visio" className="btn btn-success w-100">
-                    <i className="bi bi-camera-video me-2"></i>
-                    Rejoindre avec Avatar 3D
-                  </Link>
+                  <p className="mb-2">
+                    <i className="bi bi-tag me-2 text-muted"></i>
+                    Type: {stats.nextAppointment.type === 'ONLINE' ? 'Visio' : 'Cabinet'}
+                  </p>
+                  <p className="mb-2">
+                    <i className="bi bi-info-circle me-2 text-muted"></i>
+                    Statut: {stats.nextAppointment.status}
+                  </p>
+                  {stats.nextAppointment.type === 'ONLINE' && (
+                    <Link to="/visio" className="btn btn-success w-100">
+                      <i className="bi bi-camera-video me-2"></i>
+                      Rejoindre avec Avatar 3D
+                    </Link>
+                  )}
                 </div>
               ) : (
                 <div className="text-center text-muted py-4">
