@@ -1,67 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { searchPsychologists } from '../../utils/api';
-import { isAuthenticated } from '../../utils/auth';
 
-export default function SearchPsy() {
-  const navigate = useNavigate();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterSpecialty, setFilterSpecialty] = useState('all');
-  const [psychologists, setPsychologists] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    loadPsychologists();
-  }, []);
-
-  const loadPsychologists = async () => {
-    try {
-      setLoading(true);
-      const data = await searchPsychologists();
-      setPsychologists(data || []);
-    } catch (err) {
-      console.error('Erreur lors du chargement des psychologues:', err);
-      setError('Erreur lors du chargement des psychologues');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const filteredPsychologists = psychologists.filter(psy => {
-    const matchesSearch = 
-      (psy.pseudo?.toLowerCase().includes(searchTerm.toLowerCase()) || '') ||
-      (psy.title?.toLowerCase().includes(searchTerm.toLowerCase()) || '') ||
-      (psy.description?.toLowerCase().includes(searchTerm.toLowerCase()) || '') ||
-      (psy.specialties?.some(s => s.toLowerCase().includes(searchTerm.toLowerCase())) || false);
-    const matchesSpecialty = filterSpecialty === 'all' || 
-      (psy.specialties?.includes(filterSpecialty) || false);
-    return matchesSearch && matchesSpecialty;
-  });
-
-  const specialties = [...new Set(psychologists.flatMap(p => p.specialties || []))];
-
-  if (loading) {
-    return (
-      <div className="text-center py-5">
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Chargement...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="alert alert-danger">
-        <i className="bi bi-exclamation-triangle me-2"></i>
-        {error}
-      </div>
-    );
-  }
-
-  // Mock data pour compatibilité (à supprimer une fois le backend complet)
-  const mockPsychologists = [
+const mockPsychologists = [
   {
     id: 1,
     name: 'Dr. Sophie Martin',
@@ -136,6 +76,20 @@ export default function SearchPsy() {
   }
 ];
 
+export default function SearchPsy() {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterSpecialty, setFilterSpecialty] = useState('all');
+  const navigate = useNavigate();
+
+  const filteredPsychologists = mockPsychologists.filter(psy => {
+    const matchesSearch = psy.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          psy.specialty.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          psy.location.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSpecialty = filterSpecialty === 'all' || psy.specialty === filterSpecialty;
+    return matchesSearch && matchesSpecialty;
+  });
+
+  const specialties = [...new Set(mockPsychologists.map(p => p.specialty))];
 
   return (
     <div>
@@ -196,65 +150,60 @@ export default function SearchPsy() {
 
       {/* Liste des psychologues */}
       <div className="row">
-        {filteredPsychologists.length > 0 ? filteredPsychologists.map(psy => (
-          <div key={psy.id || psy.userId} className="col-12 col-md-6 col-lg-4 mb-4">
+        {filteredPsychologists.map(psy => (
+          <div key={psy.id} className="col-12 col-md-6 col-lg-4 mb-4">
             <div className="card shadow-sm h-100 hover-shadow">
               <div className="card-body">
                 <div className="d-flex align-items-center mb-3">
-                  <div className="rounded-circle me-3 bg-primary text-white d-flex align-items-center justify-content-center"
-                    style={{width: '60px', height: '60px', fontSize: '1.5rem'}}>
-                    <i className="bi bi-person-badge"></i>
-                  </div>
+                  <img
+                    src={psy.image}
+                    alt={psy.name}
+                    className="rounded-circle me-3"
+                    style={{width: '60px', height: '60px', objectFit: 'cover'}}
+                  />
                   <div className="flex-grow-1">
-                    <h5 className="mb-0">{psy.pseudo || psy.title || 'Psychologue'}</h5>
-                    {psy.isVisible && (
-                      <span className="badge bg-success small">Disponible</span>
-                    )}
+                    <h5 className="mb-0">{psy.name}</h5>
+                    <div className="text-warning">
+                      {'★'.repeat(Math.floor(psy.rating))}
+                      <span className="text-muted ms-1 small">({psy.rating})</span>
+                    </div>
                   </div>
                 </div>
                 
-                {psy.specialties && psy.specialties.length > 0 && (
-                  <p className="text-muted mb-2">
-                    <i className="bi bi-bookmark-fill me-2 text-primary"></i>
-                    <strong>{psy.specialties.join(', ')}</strong>
-                  </p>
-                )}
+                <p className="text-muted mb-2">
+                  <i className="bi bi-bookmark-fill me-2 text-primary"></i>
+                  <strong>{psy.specialty}</strong>
+                </p>
                 
-                {psy.description && (
-                  <p className="text-muted mb-2 small">
-                    {psy.description.substring(0, 100)}...
-                  </p>
-                )}
+                <p className="text-muted mb-2 small">
+                  <i className="bi bi-geo-alt-fill me-2 text-danger"></i>
+                  {psy.location}
+                </p>
                 
-                {psy.languages && psy.languages.length > 0 && (
-                  <p className="text-muted mb-3 small">
-                    <i className="bi bi-translate me-2 text-success"></i>
-                    {psy.languages.join(', ')}
-                  </p>
-                )}
+                <p className="text-muted mb-2 small">
+                  <i className="bi bi-clock-history me-2 text-info"></i>
+                  {psy.experience} d'expérience
+                </p>
                 
-                {psy.hourlyRate && (
-                  <div className="d-flex align-items-center justify-content-between mb-3">
-                    <span className="text-primary fw-bold fs-5">
-                      <i className="bi bi-currency-euro me-1"></i>
-                      {psy.hourlyRate}€
-                    </span>
-                    <span className="small text-muted">/ heure</span>
-                  </div>
-                )}
+                <p className="text-muted mb-3 small">
+                  <i className="bi bi-translate me-2 text-success"></i>
+                  {psy.languages.join(', ')}
+                </p>
+                
+                <div className="d-flex align-items-center justify-content-between mb-3">
+                  <span className="text-primary fw-bold fs-5">
+                    <i className="bi bi-currency-euro me-1"></i>
+                    {psy.price}
+                  </span>
+                  <span className="small text-muted">/ séance</span>
+                </div>
 
                 <div className="d-flex gap-2">
-                  {psy.isVisible ? (
+                  {psy.disponible ? (
                     <>
                       <button
                         className="btn btn-primary btn-sm flex-grow-1"
-                        onClick={() => {
-                          if (!isAuthenticated()) {
-                            navigate('/patient/login');
-                          } else {
-                            navigate('/appointments', { state: { selectedPsy: psy } });
-                          }
-                        }}
+                        onClick={() => navigate('/appointments', { state: { selectedPsy: psy } })}
                       >
                         <i className="bi bi-calendar-plus me-1"></i>
                         Prendre RDV
@@ -284,17 +233,10 @@ export default function SearchPsy() {
               </div>
             </div>
           </div>
-        )) : (
-          <div className="col-12">
-            <div className="alert alert-info text-center">
-              <i className="bi bi-search me-2"></i>
-              Aucun psychologue trouvé pour votre recherche.
-            </div>
-          </div>
-        )}
+        ))}
       </div>
 
-      {filteredPsychologists.length === 0 && psychologists.length > 0 && (
+      {filteredPsychologists.length === 0 && (
         <div className="alert alert-info text-center">
           <i className="bi bi-search me-2"></i>
           Aucun psychologue trouvé pour votre recherche.

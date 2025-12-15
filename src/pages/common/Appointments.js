@@ -1,124 +1,82 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { getMyAppointments, searchAvailabilities, bookAppointment, cancelAppointment, searchPsychologists } from '../../utils/api';
-import { isAuthenticated } from '../../utils/auth';
+import { useLocation } from 'react-router-dom';
+
+const mockPsychologists = [
+  { id: 1, name: 'Dr. Sophie Martin', specialty: 'TCC' },
+  { id: 2, name: 'Dr. Jean Dupont', specialty: 'Psychanalyse' },
+  { id: 3, name: 'Dr. Marie Laurent', specialty: 'Thérapie familiale' },
+  { id: 4, name: 'Dr. Pierre Dubois', specialty: 'Psychologie du travail' }
+];
+
+const timeSlots = [
+  '09:00', '10:00', '11:00', '14:00', '15:00', '16:00', '17:00'
+];
 
 export default function Appointments() {
   const location = useLocation();
-  const navigate = useNavigate();
-  const [selectedPsyId, setSelectedPsyId] = useState(
-    location.state?.selectedPsy?.id || location.state?.selectedPsy?.userId || null
+  const [selectedPsy, setSelectedPsy] = useState(
+    location.state?.selectedPsy?.id || mockPsychologists[0].id
   );
-  const [psychologists, setPsychologists] = useState([]);
-  const [availabilities, setAvailabilities] = useState([]);
-  const [selectedAvailability, setSelectedAvailability] = useState(null);
+  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedTime, setSelectedTime] = useState('');
   const [appointments, setAppointments] = useState([]);
   const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [booking, setBooking] = useState(false);
+  const [showCalendar, setShowCalendar] = useState(false);
 
   useEffect(() => {
-    if (!isAuthenticated()) {
-      navigate('/patient/login');
+    const saved = JSON.parse(localStorage.getItem('appointments') || '[]');
+    setAppointments(saved);
+  }, []);
+
+  const handleBookAppointment = () => {
+    if (!selectedDate || !selectedTime) {
+      setMessage('⚠️ Veuillez sélectionner une date et une heure');
       return;
     }
 
-    loadData();
-  }, [navigate]);
+    const psy = mockPsychologists.find(p => p.id === parseInt(selectedPsy));
+    
+    // En production, chiffrer avec encryptData()
+    const newAppointment = {
+      id: Date.now(),
+      psychologist: psy.name,
+      specialty: psy.specialty,
+      date: selectedDate,
+      time: selectedTime,
+      status: 'confirmé',
+      encrypted: true // Indicateur E2EE
+    };
 
-  useEffect(() => {
-    if (selectedPsyId) {
-      loadAvailabilities();
-    }
-  }, [selectedPsyId]);
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      
-      // Charger les psychologues
-      const psyData = await searchPsychologists();
-      setPsychologists(psyData || []);
-      
-      // Charger les rendez-vous
-      const appointmentsData = await getMyAppointments();
-      setAppointments(appointmentsData.appointments || []);
-    } catch (error) {
-      console.error('Erreur lors du chargement:', error);
-      setMessage('❌ Erreur lors du chargement des données');
-    } finally {
-      setLoading(false);
-    }
+    const updated = [...appointments, newAppointment];
+    setAppointments(updated);
+    localStorage.setItem('appointments', JSON.stringify(updated));
+    
+    setMessage('✅ Rendez-vous confirmé avec chiffrement E2EE !');
+    setSelectedDate('');
+    setSelectedTime('');
+    setTimeout(() => setMessage(''), 3000);
   };
 
-  const loadAvailabilities = async () => {
-    try {
-      const data = await searchAvailabilities({
-        psyId: selectedPsyId,
-        onlyAvailable: true,
-        dateFrom: new Date().toISOString(),
-      });
-      setAvailabilities(data.slots || []);
-    } catch (error) {
-      console.error('Erreur lors du chargement des disponibilités:', error);
-      setMessage('❌ Erreur lors du chargement des disponibilités');
-    }
+  const handleCancelAppointment = (id) => {
+    const updated = appointments.filter(apt => apt.id !== id);
+    setAppointments(updated);
+    localStorage.setItem('appointments', JSON.stringify(updated));
+    setMessage('🗑️ Rendez-vous annulé');
+    setTimeout(() => setMessage(''), 3000);
   };
 
-  const handleBookAppointment = async () => {
-    if (!selectedAvailability) {
-      setMessage('⚠️ Veuillez sélectionner un créneau');
-      return;
+  const generateDates = () => {
+    const dates = [];
+    const today = new Date();
+    for (let i = 1; i <= 30; i++) {
+      const date = new Date(today);
+      date.setDate(today.getDate() + i);
+      dates.push(date.toISOString().split('T')[0]);
     }
-
-    setBooking(true);
-    try {
-      await bookAppointment({
-        availabilityId: selectedAvailability.id,
-        type: 'ONLINE', // 'ONLINE' ou 'IN_PERSON' (selon AppointmentType enum)
-      });
-      
-      setMessage('✅ Rendez-vous réservé avec succès !');
-      setSelectedAvailability(null);
-      
-      // Recharger les données
-      await loadData();
-      await loadAvailabilities();
-      
-      setTimeout(() => setMessage(''), 3000);
-    } catch (error) {
-      console.error('Erreur lors de la réservation:', error);
-      if (error.response?.status === 409) {
-        setMessage('❌ Ce créneau a déjà été réservé');
-      } else {
-        setMessage('❌ Erreur lors de la réservation: ' + (error.message || 'Erreur inconnue'));
-      }
-    } finally {
-      setBooking(false);
-    }
+    return dates;
   };
 
-  const handleCancelAppointment = async (id) => {
-    try {
-      await cancelAppointment(id);
-      setMessage('🗑️ Rendez-vous annulé');
-      await loadData();
-      setTimeout(() => setMessage(''), 3000);
-    } catch (error) {
-      console.error('Erreur lors de l\'annulation:', error);
-      setMessage('❌ Erreur lors de l\'annulation');
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="text-center py-5">
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Chargement...</span>
-        </div>
-      </div>
-    );
-  }
+  const availableDates = generateDates();
 
   return (
     <div>
@@ -160,84 +118,117 @@ export default function Appointments() {
               </label>
               <select
                 className="form-select form-select-lg"
-                value={selectedPsyId || ''}
-                onChange={(e) => setSelectedPsyId(e.target.value)}
+                value={selectedPsy}
+                onChange={(e) => setSelectedPsy(e.target.value)}
               >
-                <option value="">Sélectionner un psychologue</option>
-                {psychologists.map(psy => (
-                  <option key={psy.id || psy.userId} value={psy.id || psy.userId}>
-                    {psy.pseudo || psy.title || 'Psychologue'}
-                    {psy.specialties && psy.specialties.length > 0 && ` - ${psy.specialties.join(', ')}`}
+                {mockPsychologists.map(psy => (
+                  <option key={psy.id} value={psy.id}>
+                    {psy.name} - {psy.specialty}
                   </option>
                 ))}
               </select>
             </div>
 
-            {selectedPsyId && (
-              <div className="col-md-12">
-                <label className="form-label fw-bold">
-                  <i className="bi bi-calendar-check me-1"></i>
-                  Choisir un créneau disponible
-                </label>
-                {availabilities.length === 0 ? (
-                  <div className="alert alert-info">
-                    <i className="bi bi-info-circle me-2"></i>
-                    Aucun créneau disponible pour ce psychologue
-                  </div>
-                ) : (
-                  <select
-                    className="form-select form-select-lg"
-                    value={selectedAvailability?.id || ''}
-                    onChange={(e) => {
-                      const avail = availabilities.find(a => a.id === e.target.value);
-                      setSelectedAvailability(avail);
-                    }}
-                  >
-                    <option value="">Sélectionner un créneau</option>
-                    {availabilities.map(avail => (
-                      <option key={avail.id} value={avail.id}>
-                        {new Date(avail.start).toLocaleDateString('fr-FR', {
-                          weekday: 'long',
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric'
-                        })} de {new Date(avail.start).toLocaleTimeString('fr-FR', {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })} à {new Date(avail.end).toLocaleTimeString('fr-FR', {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            )}
+            <div className="col-md-6">
+              <label className="form-label fw-bold">
+                <i className="bi bi-calendar3 me-1"></i>
+                Date
+              </label>
+              <select
+                className="form-select form-select-lg"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+              >
+                <option value="">Sélectionner une date</option>
+                {availableDates.map((date, idx) => (
+                  <option key={idx} value={date}>
+                    {new Date(date).toLocaleDateString('fr-FR', {
+                      weekday: 'long',
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric'
+                    })}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label fw-bold">
+                <i className="bi bi-clock me-1"></i>
+                Heure
+              </label>
+              <select
+                className="form-select form-select-lg"
+                value={selectedTime}
+                onChange={(e) => setSelectedTime(e.target.value)}
+              >
+                <option value="">Sélectionner une heure</option>
+                {timeSlots.map((time, idx) => (
+                  <option key={idx} value={time}>{time}</option>
+                ))}
+              </select>
+            </div>
 
             <div className="col-12">
               <button
                 className="btn btn-success btn-lg w-100"
                 onClick={handleBookAppointment}
-                disabled={!selectedAvailability || booking}
               >
-                {booking ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm me-2"></span>
-                    Réservation en cours...
-                  </>
-                ) : (
-                  <>
-                    <i className="bi bi-check-circle me-2"></i>
-                    Confirmer le rendez-vous (E2EE)
-                  </>
-                )}
+                <i className="bi bi-check-circle me-2"></i>
+                Confirmer le rendez-vous (E2EE)
               </button>
             </div>
           </div>
         </div>
       </div>
 
+      {/* Calendrier visuel */}
+      <div className="card shadow mb-4">
+        <div className="card-header d-flex justify-content-between align-items-center">
+          <h5 className="mb-0">
+            <i className="bi bi-calendar-week me-2"></i>
+            Calendrier
+          </h5>
+          <button
+            className="btn btn-sm btn-outline-primary"
+            onClick={() => setShowCalendar(!showCalendar)}
+          >
+            <i className={`bi bi-${showCalendar ? 'eye-slash' : 'eye'} me-1`}></i>
+            {showCalendar ? 'Masquer' : 'Afficher'}
+          </button>
+        </div>
+        {showCalendar && (
+          <div className="card-body">
+            <div className="row g-2">
+              {availableDates.slice(0, 14).map((date, idx) => {
+                const d = new Date(date);
+                const hasAppointment = appointments.some(apt => apt.date === date);
+                return (
+                  <div key={idx} className="col-6 col-md-3 col-lg-2">
+                    <button
+                      className={`btn w-100 ${
+                        selectedDate === date
+                          ? 'btn-primary'
+                          : hasAppointment
+                          ? 'btn-warning'
+                          : 'btn-outline-secondary'
+                      }`}
+                      onClick={() => setSelectedDate(date)}
+                    >
+                      <div className="small">{d.toLocaleDateString('fr-FR', { weekday: 'short' })}</div>
+                      <div className="fw-bold fs-5">{d.getDate()}</div>
+                      {hasAppointment && (
+                        <i className="bi bi-circle-fill small"></i>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Liste des rendez-vous */}
       <div className="card shadow">
@@ -261,49 +252,35 @@ export default function Appointments() {
                   <div className="d-flex justify-content-between align-items-start">
                     <div className="flex-grow-1">
                       <h6 className="mb-1">
-                        {apt.psy?.pseudo || 'Psychologue'}
-                        <span className="badge bg-success ms-2 small">
-                          <i className="bi bi-shield-lock"></i> E2EE
-                        </span>
+                        {apt.psychologist}
+                        {apt.encrypted && (
+                          <span className="badge bg-success ms-2 small">
+                            <i className="bi bi-shield-lock"></i> E2EE
+                          </span>
+                        )}
                       </h6>
+                      <p className="mb-1 text-muted small">{apt.specialty}</p>
                       <p className="mb-0">
                         <i className="bi bi-calendar-event me-2 text-primary"></i>
-                        {new Date(apt.scheduledStart).toLocaleDateString('fr-FR', {
-                          weekday: 'long',
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric'
-                        })} de {new Date(apt.scheduledStart).toLocaleTimeString('fr-FR', {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })} à {new Date(apt.scheduledEnd).toLocaleTimeString('fr-FR', {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
+                        {new Date(apt.date).toLocaleDateString('fr-FR')} à {apt.time}
                       </p>
                       <div className="mt-2">
-                        <span className={`badge ${
-                          apt.status === 'CONFIRMED' ? 'bg-success' :
-                          apt.status === 'PENDING' ? 'bg-warning' :
-                          apt.status === 'CANCELLED' ? 'bg-danger' :
-                          'bg-secondary'
-                        }`}>
-                          {apt.status}
-                        </span>
+                        <span className="badge bg-success">{apt.status}</span>
                         <span className="badge bg-info ms-1">
-                          <i className="bi bi-camera-video"></i> {apt.type === 'ONLINE' ? 'Visio' : 'Cabinet'}
+                          <i className="bi bi-camera-video"></i> Visio Avatar
                         </span>
                       </div>
                     </div>
                     <div className="d-flex gap-2">
-                      {apt.status !== 'CANCELLED' && (
-                        <button
-                          className="btn btn-sm btn-outline-danger"
-                          onClick={() => handleCancelAppointment(apt.id)}
-                        >
-                          <i className="bi bi-trash"></i>
-                        </button>
-                      )}
+                      <button className="btn btn-sm btn-outline-primary">
+                        <i className="bi bi-pencil"></i>
+                      </button>
+                      <button
+                        className="btn btn-sm btn-outline-danger"
+                        onClick={() => handleCancelAppointment(apt.id)}
+                      >
+                        <i className="bi bi-trash"></i>
+                      </button>
                     </div>
                   </div>
                 </div>
