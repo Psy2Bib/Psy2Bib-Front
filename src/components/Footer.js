@@ -16,7 +16,7 @@ export default function Footer() {
             </p>
             <div className='d-flex gap-2'>
               <span className='badge bg-success'>AES-256</span>
-              <span className='badge bg-primary'>PBKDF2</span>
+              <span className='badge bg-primary'>Argon2</span>
               <span className='badge bg-info'>E2EE</span>
             </div>
           </div>
@@ -30,7 +30,7 @@ export default function Footer() {
               </li>
               <li className='mb-2'>
                 <i className='bi bi-key text-primary me-2'></i>
-                PBKDF2 100k itérations
+                Argon2
               </li>
               <li className='mb-2'>
                 <i className='bi bi-eye-slash text-warning me-2'></i>

@@ -111,7 +111,7 @@ export default function Home() {
                   </h5>
                   <ul className='list-unstyled ms-4'>
                     <li className='mb-2'>🔐 AES-GCM 256 bits (chiffrement)</li>
-                    <li className='mb-2'>🔑 PBKDF2 100k itérations (dérivation clé)</li>
+                    <li className='mb-2'>🔑Argon2 (dérivation clé)</li>
                     <li className='mb-2'>🎭 MediaPipe (tracking facial)</li>
                     <li className='mb-2'>📹 WebRTC + DTLS-SRTP (visio)</li>
                     <li className='mb-2'>🛡️ CSP + RLS PostgreSQL (sécurité)</li>
